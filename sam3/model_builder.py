@@ -1,0 +1,155 @@
+import os
+import mlx.core as mx
+from sam3.model.sam3_image import Sam3Image
+from sam3.model.text_encoder_ve import VETextEncoder
+from sam3.model.tokenizer_ve import SimpleTokenizer
+from sam3.model.vitdet import ViT
+from sam3.model.position_encoding import PositionEmbeddingSine
+from sam3.model.necks import Sam3DualViTDetNeck
+from sam3.model.vl_combiner import SAM3VLBackbone
+
+
+def _create_position_encoding(precompute_resolution=None):
+    """Create position encoding for visual backbone."""
+    return PositionEmbeddingSine(
+        num_pos_feats=256,
+        normalize=True,
+        scale=None,
+        temperature=10000,
+        precompute_resolution=precompute_resolution,
+    )
+
+def _create_vit_backbone(compile_mode=None):
+    """Create ViT backbone for visual feature extraction."""
+    return ViT(
+        img_size=1008,
+        pretrain_img_size=336,
+        patch_size=14,
+        embed_dim=1024,
+        depth=32,
+        num_heads=16,
+        mlp_ratio=4.625,
+        norm_layer="LayerNorm",
+        drop_path_rate=0.1,
+        qkv_bias=True,
+        use_abs_pos=True,
+        tile_abs_pos=True,
+        global_att_blocks=(7, 15, 23, 31),
+        rel_pos_blocks=(),
+        use_rope=True,
+        use_interp_rope=True,
+        window_size=24,
+        pretrain_use_cls_token=True,
+        retain_cls_token=False,
+        ln_pre=True,
+        ln_post=False,
+        return_interm_layers=False,
+        bias_patch_embed=False,
+        compile_mode=compile_mode,
+    )
+
+def _create_vit_neck(position_encoding, vit_backbone, enable_inst_interactivity=False):
+    """Create ViT neck for feature pyramid."""
+    return Sam3DualViTDetNeck(
+        position_encoding=position_encoding,
+        d_model=256,
+        scale_factors=[4.0, 2.0, 1.0, 0.5],
+        trunk=vit_backbone,
+        add_sam2_neck=enable_inst_interactivity,
+    )
+
+def _create_vl_backbone(vit_neck, text_encoder):
+    """Create visual-language backbone."""
+    return SAM3VLBackbone(visual=vit_neck, text=text_encoder, scalp=1)
+
+def _create_sam3_model(
+    backbone,
+    # transformer,
+):
+    common_params = {
+        "backbone": backbone,
+    }
+
+    model = Sam3Image(**common_params)
+    return model
+
+def _create_text_encoder(bpe_path: str) -> VETextEncoder:
+    tokenizer = SimpleTokenizer(bpe_path=bpe_path)
+    return VETextEncoder(
+        tokenizer=tokenizer,
+        d_model=256,
+        width=1024,
+        heads=16,
+        layers=24
+    )
+
+def _create_vision_backbone(
+    compile_mode=None,
+    enable_inst_interactivity=True
+): # -> Sam3DualVitDetNeck
+
+    position_encoding = _create_position_encoding(precompute_resolution=1008)
+
+    # TODO: vit_backbone, look about compile_mode
+    vit_backbone = _create_vit_backbone(compile_mode=compile_mode)
+
+    vit_neck = _create_vit_neck(
+        position_encoding,
+        vit_backbone,
+        enable_inst_interactivity=enable_inst_interactivity
+    )
+    return vit_neck
+
+def load_checkpoint(model, checkpoint_path):
+    weights = mx.load(checkpoint_path)
+    try:
+        model.load_weights(weights)
+    except ValueError as e:
+        msg = str(e)
+        
+        expected_missing = [
+            "attn_mask", 
+            "position_encoding.cache"
+        ]
+        
+        if all(key in msg for key in expected_missing) or "Missing" in msg:
+            print(f"Expected Missing Buffers: {e}")
+            model.load_weights(weights, strict=False)
+        else:
+            raise e
+         
+
+def build_sam3_image_model(
+    bpe_path=None,
+    # device=None,
+    # eval_mode=True,
+    checkpoint_path=None,
+    # load_from_HF=True,
+    enable_segmentation=True,
+    enable_inst_interactivity=True,
+    compile=False
+):
+    # create models here
+
+    if bpe_path is None:
+        bpe_path = os.path.join(
+            os.path.dirname(__file__), "..", "assets", "bpe_simple_vocab_16e6.txt.gz"
+        )
+
+    # TODO: look about model compilation comparing how it's done in pytorch
+    # vs how it's done in mlx
+    # TODO: look about enable_inst_interactivity
+    vision_encoder = _create_vision_backbone(
+        compile_mode=compile, enable_inst_interactivity=enable_inst_interactivity
+    )
+    
+    text_encoder = _create_text_encoder(bpe_path)
+
+    backbone = _create_vl_backbone(vision_encoder, text_encoder)
+
+
+    model = _create_sam3_model(backbone)
+
+    breakpoint()
+    load_checkpoint(model, checkpoint_path)
+    breakpoint()
