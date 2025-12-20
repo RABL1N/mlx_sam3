@@ -8,10 +8,15 @@ export interface UploadResponse {
   processing_time_ms: number;
 }
 
+export interface RLEMask {
+  counts: number[];  // Run-length encoded counts
+  size: [number, number];  // [height, width]
+}
+
 export interface SegmentationResult {
   original_width: number;
   original_height: number;
-  masks?: number[][][][]; // [N, 1, H, W] - each mask has 1 channel
+  masks?: RLEMask[];      // RLE-encoded masks
   boxes?: number[][];     // [N, 4] as [x0, y0, x1, y1]
   scores?: number[];      // [N]
   prompted_boxes?: { box: number[]; label: boolean }[];

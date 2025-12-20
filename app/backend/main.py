@@ -91,6 +91,38 @@ class SessionRequest(BaseModel):
     session_id: str
 
 
+def mask_to_rle(mask: np.ndarray) -> dict:
+    """
+    Encode a binary mask to RLE (Run-Length Encoding) format.
+    
+    Args:
+        mask: 2D binary numpy array (H, W) with values 0 or 1
+        
+    Returns:
+        dict with 'counts' (list of run lengths) and 'size' [H, W]
+    """
+    # Flatten the mask in row-major (C) order
+    flat = mask.flatten()
+    
+    # Find where values change
+    diff = np.diff(flat)
+    change_indices = np.where(diff != 0)[0] + 1
+    
+    # Build run lengths
+    run_starts = np.concatenate([[0], change_indices])
+    run_ends = np.concatenate([change_indices, [len(flat)]])
+    run_lengths = (run_ends - run_starts).tolist()
+    
+    # If mask starts with 1, prepend a 0-length run for background
+    if flat[0] == 1:
+        run_lengths = [0] + run_lengths
+    
+    return {
+        "counts": run_lengths,
+        "size": list(mask.shape)  # [H, W]
+    }
+
+
 def serialize_state(state: dict) -> dict:
     """Convert state arrays to JSON-serializable format."""
     result = {
@@ -103,7 +135,6 @@ def serialize_state(state: dict) -> dict:
         boxes = state["boxes"]
         scores = state["scores"]
         
-        # Convert to numpy and then to lists
         masks_list = []
         boxes_list = []
         scores_list = []
@@ -113,9 +144,14 @@ def serialize_state(state: dict) -> dict:
             box_np = np.array(boxes[i])
             score_np = float(np.array(scores[i]))
             
-            # Convert mask to binary (0/1) format
+            # Convert mask to binary and get the 2D mask (handle [1, H, W] shape)
             mask_binary = (mask_np > 0.5).astype(np.uint8)
-            masks_list.append(mask_binary.tolist())
+            if mask_binary.ndim == 3:
+                mask_binary = mask_binary[0]  # Take first channel
+            
+            # Encode as RLE
+            rle = mask_to_rle(mask_binary)
+            masks_list.append(rle)
             boxes_list.append(box_np.tolist())
             scores_list.append(score_np)
         
@@ -191,11 +227,15 @@ async def segment_with_text(request: TextPromptRequest):
         state = processor.set_text_prompt(request.prompt, session["state"])
         processing_time_ms = (time.perf_counter() - start_time) * 1000
         session["state"] = state
+        start = time.perf_counter()
+        results = serialize_state(state)
+        end = time.perf_counter()
+        print(f"Serialization took {end - start:.4f} seconds")
         
         return {
             "session_id": request.session_id,
             "prompt": request.prompt,
-            "results": serialize_state(state),
+            "results": results,
             "processing_time_ms": round(processing_time_ms, 2)
         }
     

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
-import type { SegmentationResult } from "@/lib/api";
+import type { SegmentationResult, RLEMask } from "@/lib/api";
 
 interface Props {
   imageUrl: string | null;
@@ -24,6 +24,42 @@ const COLORS = [
   [251, 146, 60], // Orange
   [147, 197, 253], // Light Blue
 ];
+
+/**
+ * Decode RLE mask to ImageData for canvas rendering.
+ * Returns an ImageData object with the mask color applied.
+ */
+function decodeRLEToImageData(rle: RLEMask, color: number[]): ImageData | null {
+  const [height, width] = rle.size;
+  if (height === 0 || width === 0) return null;
+
+  const imageData = new ImageData(width, height);
+  const data = imageData.data;
+  const { counts } = rle;
+
+  let pixelIdx = 0;
+  let isForeground = false; // RLE starts with background count
+
+  for (const count of counts) {
+    if (isForeground) {
+      // Fill foreground pixels with color
+      for (let j = 0; j < count && pixelIdx < width * height; j++) {
+        const idx = pixelIdx * 4;
+        data[idx] = color[0];
+        data[idx + 1] = color[1];
+        data[idx + 2] = color[2];
+        data[idx + 3] = 255; // Opaque
+        pixelIdx++;
+      }
+    } else {
+      // Skip background pixels (already transparent)
+      pixelIdx += count;
+    }
+    isForeground = !isForeground;
+  }
+
+  return imageData;
+}
 
 export function SegmentationCanvas({
   imageUrl,
@@ -100,7 +136,7 @@ export function SegmentationCanvas({
     // Draw image
     ctx.drawImage(imageRef.current, 0, 0, displayWidth, displayHeight);
 
-    // Draw masks with semi-transparency
+    // Draw masks with semi-transparency using RLE decoding + canvas compositing
     if (result?.masks && result.masks.length > 0) {
       for (let i = 0; i < result.masks.length; i++) {
         const mask = result.masks[i];
@@ -108,62 +144,27 @@ export function SegmentationCanvas({
         const score = result.scores?.[i] ?? 0;
         const color = COLORS[i % COLORS.length];
 
-        // Draw mask overlay
-        if (mask && Array.isArray(mask) && mask.length > 0) {
-          // Handle both [1, H, W] and [H, W] formats
-          let maskData: number[][];
-          if (Array.isArray(mask[0]) && Array.isArray(mask[0][0])) {
-            // Shape is [1, H, W] - take first channel
-            maskData = mask[0] as number[][];
-          } else if (Array.isArray(mask[0])) {
-            // Shape is [H, W] - use directly
-            maskData = mask as unknown as number[][];
-          } else {
-            continue;
-          }
+        // Decode RLE mask and draw
+        if (mask && mask.counts && mask.size) {
+          const maskImageData = decodeRLEToImageData(mask, color);
+          if (!maskImageData) continue;
 
-          const maskH = maskData.length;
-          const maskW = maskData[0]?.length || 0;
-          if (maskH === 0 || maskW === 0) continue;
+          const [maskH, maskW] = mask.size;
 
-          // Create overlay with semi-transparent mask color
-          const imgData = ctx.getImageData(0, 0, displayWidth, displayHeight);
-          const data = imgData.data;
+          // Create offscreen canvas at mask resolution
+          const offscreen = document.createElement("canvas");
+          offscreen.width = maskW;
+          offscreen.height = maskH;
+          const offCtx = offscreen.getContext("2d");
+          if (!offCtx) continue;
 
-          // Scale factors from mask coordinates to display coordinates
-          const scaleX = displayWidth / maskW;
-          const scaleY = displayHeight / maskH;
+          // Put decoded mask to offscreen canvas
+          offCtx.putImageData(maskImageData, 0, 0);
 
-          for (let my = 0; my < maskH; my++) {
-            const row = maskData[my];
-            if (!row) continue;
-            for (let mx = 0; mx < row.length; mx++) {
-              if (row[mx] > 0) {
-                // Map mask pixel to display pixel(s)
-                const dx = Math.floor(mx * scaleX);
-                const dy = Math.floor(my * scaleY);
-
-                if (
-                  dx >= 0 &&
-                  dx < displayWidth &&
-                  dy >= 0 &&
-                  dy < displayHeight
-                ) {
-                  const idx = (dy * displayWidth + dx) * 4;
-                  // Blend with existing pixel (50% opacity)
-                  data[idx] = Math.round(data[idx] * 0.5 + color[0] * 0.5);
-                  data[idx + 1] = Math.round(
-                    data[idx + 1] * 0.5 + color[1] * 0.5
-                  );
-                  data[idx + 2] = Math.round(
-                    data[idx + 2] * 0.5 + color[2] * 0.5
-                  );
-                }
-              }
-            }
-          }
-
-          ctx.putImageData(imgData, 0, 0);
+          // Composite onto main canvas with transparency (GPU-accelerated scaling & blending)
+          ctx.globalAlpha = 0.5;
+          ctx.drawImage(offscreen, 0, 0, displayWidth, displayHeight);
+          ctx.globalAlpha = 1.0;
         }
 
         // Draw bounding box
