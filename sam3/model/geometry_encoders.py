@@ -68,7 +68,6 @@ def concat_padded_sequences(seq1, mask1, seq2, mask2, return_index: bool = False
     # At this point, the element of seq1 are in the right place
     # We just need to shift the elements of seq2
 
-    # TODO: Check how this works, implemented using cursor
     if seq2_length > 0:
         index = mx.tile(mx.arange(seq2_length)[:, None], (1, batch_size))
         index = index + actual_seq1_lengths[None]

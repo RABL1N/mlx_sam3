@@ -362,7 +362,7 @@ def build_sam3_image_model(
         )
     
     if checkpoint_path is not None:
-        load_checkpoint(model, f"{checkpoint_path}/model.safetensors")
+        load_checkpoint(model, f"{checkpoint_path}")
 
     model.eval()
 

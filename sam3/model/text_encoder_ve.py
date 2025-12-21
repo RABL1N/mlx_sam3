@@ -120,14 +120,6 @@ class Transformer(nn.Module):
                 )
                 for _ in range(layers)
             ]
-        
-
-        # if compile_mode is not None:
-        #     self.forward = torch.compile(
-        #         self.forward, mode=compile_mode, fullgraph=True
-        #     )
-        #     if self.grad_checkpointing:
-        #         torch._dynamo.config.optimize_ddp = False
 
     def __call__(
         self,
@@ -135,17 +127,6 @@ class Transformer(nn.Module):
         attn_mask: Optional[mx.array] = None,
     ) -> mx.array:
         for _, r in enumerate(self.resblocks):
-            # if (
-            #     self.grad_checkpointing
-            #     and not torch.jit.is_scripting()
-            #     and self.training
-            # ):
-            #     x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
-            # else:
-            #     x = r(
-            #         x,
-            #         attn_mask=attn_mask,
-            #     )
             x = r(
                 x,
                 attn_mask=attn_mask,

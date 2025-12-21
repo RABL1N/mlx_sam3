@@ -140,7 +140,7 @@ def download_and_convert(hf_repo: str, mlx_path: Union[str, Path], force: bool =
     # Skip if already converted (unless force=True)
     if weights_file.exists() and index_file.exists() and not force:
         # print(f"MLX weights already exist at {mlx_path}, skipping conversion.")
-        return mlx_path
+        return weights_file
     
     print(f"Downloading and converting weights from {hf_repo}...")
     model_path = download(hf_repo)
@@ -150,7 +150,7 @@ def download_and_convert(hf_repo: str, mlx_path: Union[str, Path], force: bool =
     mlx_weights = convert(model_path)
     save_weights(mlx_path, mlx_weights)
 
-    return mlx_path
+    return weights_file
     
 
 if __name__ == "__main__":

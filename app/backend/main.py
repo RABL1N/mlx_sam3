@@ -37,14 +37,11 @@ async def lifespan(app: FastAPI):
     global model, processor
     
     sam3_root = os.path.dirname(sam3.__file__)
-    bpe_path = os.path.join(sam3_root, "..", "assets", "bpe_simple_vocab_16e6.txt.gz")
-    checkpoint_path = os.path.join(sam3_root, "..", "sam3-mod-weights", "model.safetensors")
+    # bpe_path = os.path.join(sam3_root, "..", "assets", "bpe_simple_vocab_16e6.txt.gz")
+    # checkpoint_path = os.path.join(sam3_root, "..", "sam3-mod-weights", "model.safetensors")
     
-    print(f"Loading SAM3 model from {checkpoint_path}...")
-    model = build_sam3_image_model(
-        bpe_path=bpe_path,
-        checkpoint_path=checkpoint_path
-    )
+    # print(f"Loading SAM3 model from {checkpoint_path}...")
+    model = build_sam3_image_model()
     processor = Sam3Processor(model)
     print("SAM3 model loaded successfully!")
     

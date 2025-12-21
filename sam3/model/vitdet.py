@@ -197,7 +197,7 @@ class PatchEmbed(nn.Module):
         # B C H W -> B H W C
         x = x.transpose(0, 2, 3, 1)
         x = self.proj(x)
-        
+        # B H W C
         return x
         
 class Attention(nn.Module):

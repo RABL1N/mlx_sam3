@@ -165,6 +165,7 @@ class Sam3Processor:
         # out_probs = out_probs[keep]
         out_masks = out_masks[0][indices]
         out_bbox = out_bbox[0][indices]
+        seg_mask = outputs['semantic_seg']
 
         # convert box to [x0, y0, x1, y1] format
         boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
@@ -174,13 +175,17 @@ class Sam3Processor:
         scale_fct = mx.array([img_w, img_h, img_w, img_h])
         boxes = boxes * scale_fct[None, :]
 
-        out_masks = mx.sigmoid(interpolate(
-            out_masks[:, None],
-            (img_h, img_w),
+        interpolator = partial(interpolate,
+            size=(img_h, img_w),
             mode="bilinear",
             align_corners=False,
-        ))
+        )
+        out_masks = interpolator(out_masks[:, None])
+        out_masks = mx.sigmoid(out_masks)
 
+        seg_mask = interpolator(seg_mask)
+
+        state["semantic_seg"] = seg_mask
         state["mask_logits"] = out_masks
         state["masks"] = out_masks > 0.5
         state["boxes"] = boxes
