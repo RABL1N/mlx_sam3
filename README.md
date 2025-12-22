@@ -13,7 +13,7 @@
 
 <br>
 
-[![Read the Blog](https://img.shields.io/badge/📖_Read_the_Blog-Understanding_SAM3-FF6B6B?style=for-the-badge)](https://YOUR_BLOG_URL_HERE)
+[![Read the Blog](https://img.shields.io/badge/📖_Read_the_Blog-Understanding_SAM3-FF6B6B?style=for-the-badge)](https://deekshith.me/blog/mlx-sam3)
 
 </div>
 
@@ -22,7 +22,7 @@
 <table>
 <tr>
 <td>
-<strong>📖 New to SAM3?</strong> Check out the accompanying blog post where I explain the SAM3 architecture, how it works, and what makes it special: <a href="https://YOUR_BLOG_URL_HERE"><strong>Understanding SAM3 →</strong></a>
+<strong>📖 New to SAM3?</strong> Check out the accompanying blog post where I explain the SAM3 architecture, how it works, and what makes it special: <a href="https://deekshith.me/blog/mlx-sam3"><strong>Understanding SAM3 →</strong></a>
 </td>
 </tr>
 </table>
@@ -68,8 +68,20 @@
 | **Python** | 3.13+ | Required for MLX compatibility |
 | **Node.js** | 18+ | For the web interface |
 | **uv** | Latest | *Optional but recommended* — [Install uv](https://docs.astral.sh/uv/getting-started/installation/) |
+| **HuggingFace** | Account | Required to download model weights |
 
 > ⚠️ **Apple Silicon Only**: This project uses [MLX](https://github.com/ml-explore/mlx), Apple's machine learning framework optimized exclusively for Apple Silicon.
+
+### 🔐 HuggingFace Authorization
+
+The SAM3 model weights are hosted on HuggingFace and require authorization:
+
+1. Create a [HuggingFace account](https://huggingface.co/join) if you don't have one
+2. Visit the [facebook/sam3](https://huggingface.co/facebook/sam3) model page and accept the license terms
+3. Log in via the CLI:
+   ```bash
+   hf auth login
+   ```
 
 ---
 
@@ -91,7 +103,7 @@ uv sync
 cd app && ./run.sh
 ```
 
-The first run will automatically download model weights from HuggingFace (~3.2GB).
+The first run will automatically download model weights from HuggingFace (~3.5GB).
 
 **Access the app:**
 - 🌐 **Frontend**: http://localhost:3000
