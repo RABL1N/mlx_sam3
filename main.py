@@ -103,7 +103,7 @@ def main():
     print(f"Image processed in {inter - second:.2f} seconds.")
 
     processor.reset_all_prompts(inference_state)
-    inference_state = processor.set_text_prompt(state=inference_state, prompt="shoe")
+    inference_state = processor.set_text_prompt(state=inference_state, prompt="face")
     output = inference_state
     
     # Get the masks, bounding boxes, and scores
