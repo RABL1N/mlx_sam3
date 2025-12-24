@@ -7,7 +7,7 @@
 [![MLX](https://img.shields.io/badge/MLX-Apple%20Silicon-black?logo=apple)](https://github.com/ml-explore/mlx)
 [![Python 3.13+](https://img.shields.io/badge/Python-3.13+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![HuggingFace](https://img.shields.io/badge/🤗-Model%20Hub-yellow)](https://huggingface.co/facebook/sam3)
+[![HuggingFace](https://img.shields.io/badge/🤗-MLX%20Community-yellow)](https://huggingface.co/mlx-community/sam3-image)
 
 *A high-performance MLX port of Meta's SAM3 for interactive image segmentation on Mac*
 
@@ -68,20 +68,8 @@
 | **Python** | 3.13+ | Required for MLX compatibility |
 | **Node.js** | 18+ | For the web interface |
 | **uv** | Latest | *Optional but recommended* — [Install uv](https://docs.astral.sh/uv/getting-started/installation/) |
-| **HuggingFace** | Account | Required to download model weights |
 
 > ⚠️ **Apple Silicon Only**: This project uses [MLX](https://github.com/ml-explore/mlx), Apple's machine learning framework optimized exclusively for Apple Silicon.
-
-### 🔐 HuggingFace Authorization
-
-The SAM3 model weights are hosted on HuggingFace and require authorization:
-
-1. Create a [HuggingFace account](https://huggingface.co/join) if you don't have one
-2. Visit the [facebook/sam3](https://huggingface.co/facebook/sam3) model page and accept the license terms
-3. Log in via the CLI:
-   ```bash
-   hf auth login
-   ```
 
 ---
 
@@ -103,7 +91,7 @@ uv sync
 cd app && ./run.sh
 ```
 
-The first run will automatically download model weights from HuggingFace (~3.5GB).
+The first run will automatically download MLX weights from [mlx-community/sam3-image](https://huggingface.co/mlx-community/sam3-image) (~3.5GB).
 
 **Access the app:**
 - 🌐 **Frontend**: http://localhost:3000
@@ -167,7 +155,7 @@ from PIL import Image
 from sam3 import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
 
-# Load model (auto-downloads weights on first run)
+# Load model (auto-downloads MLX weights from mlx-community/sam3-image)
 model = build_sam3_image_model()
 processor = Sam3Processor(model, confidence_threshold=0.5)
 
@@ -285,7 +273,7 @@ jupyter notebook
 | **ML Framework** | [MLX](https://github.com/ml-explore/mlx) |
 | **Backend** | FastAPI, Uvicorn |
 | **Frontend** | Next.js 16, React 19, Tailwind CSS 4 |
-| **Model** | [Meta SAM3](https://huggingface.co/facebook/sam3) |
+| **Model** | [SAM3 MLX](https://huggingface.co/mlx-community/sam3-image) |
 
 ---
 
