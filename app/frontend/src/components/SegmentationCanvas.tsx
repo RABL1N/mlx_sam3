@@ -3,13 +3,21 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import type { SegmentationResult, RLEMask } from "@/lib/api";
 
+interface Point {
+  x: number;
+  y: number;
+  label: boolean; // true for positive, false for negative
+}
+
 interface Props {
   imageUrl: string | null;
   imageWidth: number;
   imageHeight: number;
   result: SegmentationResult | null;
-  boxMode: "positive" | "negative";
+  boxMode: "positive" | "negative" | null; // null means box mode is off
+  pointMode: "positive" | "negative" | null; // null means point mode is off
   onBoxDrawn: (box: number[]) => void;
+  onPointClicked?: (point: number[], label: boolean) => void; // [x, y] normalized
   isLoading: boolean;
 }
 
@@ -67,7 +75,9 @@ export function SegmentationCanvas({
   imageHeight,
   result,
   boxMode,
+  pointMode,
   onBoxDrawn,
+  onPointClicked,
   isLoading,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -83,6 +93,7 @@ export function SegmentationCanvas({
     y: number;
   } | null>(null);
   const [displayScale, setDisplayScale] = useState(1);
+  const [points, setPoints] = useState<Point[]>([]);
 
   // Calculate display scale to fit image in container
   useEffect(() => {
@@ -114,6 +125,13 @@ export function SegmentationCanvas({
     };
     img.src = imageUrl;
   }, [imageUrl]);
+
+  // Clear points when point mode is disabled or image changes
+  useEffect(() => {
+    if (pointMode === null) {
+      setPoints([]);
+    }
+  }, [pointMode, imageUrl]);
 
   // Redraw when result changes
   const drawCanvas = useCallback(() => {
@@ -193,6 +211,32 @@ export function SegmentationCanvas({
       }
     }
 
+    // Draw points (positive = green, negative = red)
+    points.forEach((point) => {
+      const x = point.x * displayScale;
+      const y = point.y * displayScale;
+      const radius = 8;
+      
+      // Draw outer circle
+      ctx.fillStyle = point.label ? "rgba(34, 197, 94, 0.3)" : "rgba(239, 68, 68, 0.3)";
+      ctx.beginPath();
+      ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw inner circle
+      ctx.fillStyle = point.label ? "#22c55e" : "#ef4444";
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw border
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+
     // Draw prompted boxes
     if (result?.prompted_boxes) {
       for (const promptedBox of result.prompted_boxes) {
@@ -211,7 +255,7 @@ export function SegmentationCanvas({
     }
 
     // Draw current drawing box
-    if (isDrawing && startPoint && currentPoint) {
+    if (isDrawing && startPoint && currentPoint && boxMode !== null) {
       const x = Math.min(startPoint.x, currentPoint.x);
       const y = Math.min(startPoint.y, currentPoint.y);
       const width = Math.abs(currentPoint.x - startPoint.x);
@@ -232,6 +276,7 @@ export function SegmentationCanvas({
     startPoint,
     currentPoint,
     boxMode,
+    points,
   ]);
 
   useEffect(() => {
@@ -251,15 +296,55 @@ export function SegmentationCanvas({
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isLoading) return;
-    const coords = getCanvasCoordinates(e);
-    if (coords) {
-      setIsDrawing(true);
-      setStartPoint(coords);
-      setCurrentPoint(coords);
+    
+    // Handle point clicks
+    if (pointMode !== null && onPointClicked) {
+      const coords = getCanvasCoordinates(e);
+      if (coords) {
+        // Check if clicking on an existing point (to remove it)
+        const clickRadius = 12;
+        const clickedPointIndex = points.findIndex((p) => {
+          const px = p.x * displayScale;
+          const py = p.y * displayScale;
+          const dist = Math.sqrt(
+            Math.pow(coords.x - px, 2) + Math.pow(coords.y - py, 2)
+          );
+          return dist < clickRadius;
+        });
+
+        if (clickedPointIndex !== -1) {
+          // Remove the clicked point
+          setPoints((prev) => prev.filter((_, i) => i !== clickedPointIndex));
+          return;
+        }
+
+        // Add new point
+        const normalizedX = coords.x / displayScale / imageWidth;
+        const normalizedY = coords.y / displayScale / imageHeight;
+        const newPoint: Point = {
+          x: normalizedX * imageWidth,
+          y: normalizedY * imageHeight,
+          label: pointMode === "positive",
+        };
+        setPoints((prev) => [...prev, newPoint]);
+        onPointClicked([normalizedX, normalizedY], pointMode === "positive");
+      }
+      return;
+    }
+
+    // Handle box drawing (only if box mode is enabled and point mode is disabled)
+    if (boxMode !== null && pointMode === null) {
+      const coords = getCanvasCoordinates(e);
+      if (coords) {
+        setIsDrawing(true);
+        setStartPoint(coords);
+        setCurrentPoint(coords);
+      }
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (pointMode !== null || boxMode === null) return; // Don't draw boxes if point mode is active or box mode is disabled
     if (!isDrawing) return;
     const coords = getCanvasCoordinates(e);
     if (coords) {
@@ -268,6 +353,7 @@ export function SegmentationCanvas({
   };
 
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (pointMode !== null || boxMode === null) return; // Don't handle box drawing if point mode is active or box mode is disabled
     if (!isDrawing || !startPoint) {
       setIsDrawing(false);
       return;
@@ -338,7 +424,13 @@ export function SegmentationCanvas({
         className={`rounded-lg shadow-xl ${
           isLoading ? "opacity-50 pointer-events-none" : ""
         }`}
-        style={{ cursor: isLoading ? "wait" : "crosshair" }}
+        style={{
+          cursor: isLoading
+            ? "wait"
+            : pointMode !== null
+            ? "crosshair"
+            : "crosshair",
+        }}
       />
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center">

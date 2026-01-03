@@ -9,7 +9,7 @@ export interface UploadResponse {
 }
 
 export interface RLEMask {
-  counts: number[];  // Run-length encoded counts
+  counts: number[] | string;  // Run-length encoded counts (array or space-separated string)
   size: [number, number];  // [height, width]
 }
 
@@ -35,6 +35,14 @@ export interface ResetResponse {
   message: string;
   results: SegmentationResult;
   processing_time_ms: number;
+}
+
+export interface SaveAnnotationsResponse {
+  session_id: string;
+  message: string;
+  output_directory: string;
+  files_saved: string[];
+  annotations: SegmentationResult;
 }
 
 // Helper to fetch with error handling
@@ -88,6 +96,20 @@ export async function addBoxPrompt(
   );
 }
 
+export async function addPointPrompt(
+  sessionId: string,
+  point: number[],
+  label: boolean
+): Promise<SegmentResponse> {
+  return apiFetch<SegmentResponse>(() =>
+    fetch(`${API_BASE}/segment/point`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, point, label }),
+    })
+  );
+}
+
 export async function resetPrompts(sessionId: string): Promise<ResetResponse> {
   return apiFetch<ResetResponse>(() =>
     fetch(`${API_BASE}/reset`, {
@@ -101,6 +123,16 @@ export async function resetPrompts(sessionId: string): Promise<ResetResponse> {
 export async function checkHealth(): Promise<{ status: string; model_loaded: boolean }> {
   return apiFetch<{ status: string; model_loaded: boolean }>(() =>
     fetch(`${API_BASE}/health`)
+  );
+}
+
+export async function saveAnnotations(sessionId: string): Promise<SaveAnnotationsResponse> {
+  return apiFetch<SaveAnnotationsResponse>(() =>
+    fetch(`${API_BASE}/save-annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    })
   );
 }
 

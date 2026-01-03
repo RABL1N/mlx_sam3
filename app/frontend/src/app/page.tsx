@@ -14,6 +14,9 @@ import {
   BoxSelect,
   Timer,
   Server,
+  Download,
+  MousePointer2,
+  MousePointerClick,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,12 +26,16 @@ import {
   uploadImage,
   segmentWithText,
   addBoxPrompt,
+  addPointPrompt,
   resetPrompts,
   checkHealth,
+  saveAnnotations,
   type SegmentationResult,
+  type RLEMask,
 } from "@/lib/api";
 
-type BoxMode = "positive" | "negative";
+type BoxMode = "positive" | "negative" | null;
+type PointMode = "positive" | "negative" | null;
 
 interface TimingEntry {
   label: string;
@@ -53,7 +60,8 @@ export default function Home() {
   const [imageHeight, setImageHeight] = useState(0);
   const [result, setResult] = useState<SegmentationResult | null>(null);
   const [textPrompt, setTextPrompt] = useState("");
-  const [boxMode, setBoxMode] = useState<BoxMode>("positive");
+  const [boxMode, setBoxMode] = useState<BoxMode>(null);
+  const [pointMode, setPointMode] = useState<PointMode>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [backendStatus, setBackendStatus] = useState<
@@ -116,6 +124,8 @@ export default function Home() {
         setImageHeight(response.height);
         setResult(null);
         setTextPrompt("");
+        setPointMode(null);
+        setBoxMode(null);
         addTiming("Image Encoding", response.processing_time_ms);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to upload image");
@@ -156,7 +166,7 @@ export default function Home() {
 
   const handleBoxDrawn = useCallback(
     async (box: number[]) => {
-      if (!sessionId) return;
+      if (!sessionId || boxMode === null) return;
 
       setError(null);
       setIsLoading(true);
@@ -180,23 +190,76 @@ export default function Home() {
     [sessionId, boxMode, addTiming]
   );
 
+  const handlePointClick = useCallback(
+    async (point: number[], label: boolean) => {
+      if (!sessionId) return;
+
+      setError(null);
+      setIsLoading(true);
+
+      try {
+        const response = await addPointPrompt(sessionId, point, label);
+        setResult(response.results);
+        addTiming(`Point (${label ? "positive" : "negative"})`, response.processing_time_ms);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to add point prompt"
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [sessionId, addTiming]
+  );
+
   const handleReset = async () => {
     if (!sessionId) return;
 
     setError(null);
     setIsLoading(true);
 
-    try {
-      const response = await resetPrompts(sessionId);
-      setResult(response.results);
-      setTextPrompt("");
-      addTiming("Reset Prompts", response.processing_time_ms);
+      try {
+        const response = await resetPrompts(sessionId);
+        setResult(response.results);
+        setTextPrompt("");
+        setPointMode(null);
+        setBoxMode(null);
+        addTiming("Reset Prompts", response.processing_time_ms);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset");
     } finally {
       setIsLoading(false);
     }
   };
+
+  const handleSaveAnnotations = useCallback(async () => {
+    if (!sessionId || !result || !result.masks || result.masks.length === 0) {
+      setError("No masks to save. Please segment an image first.");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Save annotations on server
+      const response = await saveAnnotations(sessionId);
+      
+      // Show success message with file location
+      const message = `Annotations saved successfully!\n\n` +
+        `Directory: ${response.output_directory}\n` +
+        `Files saved: ${response.files_saved.length}\n` +
+        `Files: ${response.files_saved.join(", ")}`;
+      
+      // Show success message (you can replace this with a toast notification)
+      alert(message);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save annotations");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [sessionId, result]);
 
   const maskCount = result?.masks?.length ?? 0;
 
@@ -337,8 +400,16 @@ export default function Home() {
                 <Button
                   variant={boxMode === "positive" ? "default" : "secondary"}
                   size="sm"
-                  onClick={() => setBoxMode("positive")}
+                  onClick={() => {
+                    if (boxMode === "positive") {
+                      setBoxMode(null);
+                    } else {
+                      setBoxMode("positive");
+                      setPointMode(null);
+                    }
+                  }}
                   className="flex-1"
+                  disabled={pointMode !== null}
                 >
                   <Square className="w-4 h-4 mr-1" />
                   Include
@@ -346,8 +417,16 @@ export default function Home() {
                 <Button
                   variant={boxMode === "negative" ? "destructive" : "secondary"}
                   size="sm"
-                  onClick={() => setBoxMode("negative")}
+                  onClick={() => {
+                    if (boxMode === "negative") {
+                      setBoxMode(null);
+                    } else {
+                      setBoxMode("negative");
+                      setPointMode(null);
+                    }
+                  }}
                   className="flex-1"
+                  disabled={pointMode !== null}
                 >
                   <SquareMinus className="w-4 h-4 mr-1" />
                   Exclude
@@ -358,11 +437,86 @@ export default function Home() {
                   className={`w-3 h-3 rounded border-2 ${
                     boxMode === "positive"
                       ? "border-primary bg-primary/20"
+                      : boxMode === "negative"
+                      ? "border-destructive bg-destructive/20"
                       : "border-muted"
                   }`}
                 />
                 <span className="text-muted-foreground">
-                  Drawing: {boxMode === "positive" ? "Include" : "Exclude"}
+                  {boxMode === null
+                    ? "Click buttons to enable box mode"
+                    : boxMode === "positive"
+                    ? "Drawing: Include"
+                    : "Drawing: Exclude"}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Point Prompts */}
+          <Card className={!sessionId ? "opacity-50 pointer-events-none" : ""}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <MousePointerClick className="w-4 h-4" />
+                Point Prompts
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Click on the image to add positive or negative points. Click existing points to remove them.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant={pointMode === "positive" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => {
+                    if (pointMode === "positive") {
+                      setPointMode(null);
+                    } else {
+                      setPointMode("positive");
+                      setBoxMode(null);
+                    }
+                  }}
+                  className="flex-1"
+                  disabled={boxMode !== null}
+                >
+                  <MousePointer2 className="w-4 h-4 mr-1" />
+                  Include
+                </Button>
+                <Button
+                  variant={pointMode === "negative" ? "destructive" : "secondary"}
+                  size="sm"
+                  onClick={() => {
+                    if (pointMode === "negative") {
+                      setPointMode(null);
+                    } else {
+                      setPointMode("negative");
+                      setBoxMode(null);
+                    }
+                  }}
+                  className="flex-1"
+                  disabled={boxMode !== null}
+                >
+                  <MousePointerClick className="w-4 h-4 mr-1" />
+                  Exclude
+                </Button>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <div
+                  className={`w-3 h-3 rounded-full border-2 ${
+                    pointMode === "positive"
+                      ? "border-primary bg-primary/20"
+                      : pointMode === "negative"
+                      ? "border-destructive bg-destructive/20"
+                      : "border-muted"
+                  }`}
+                />
+                <span className="text-muted-foreground">
+                  {pointMode === null
+                    ? "Click buttons to enable point mode"
+                    : pointMode === "positive"
+                    ? "Clicking: Include"
+                    : "Clicking: Exclude"}
                 </span>
               </div>
             </CardContent>
@@ -395,6 +549,16 @@ export default function Home() {
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Clear All Prompts
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleSaveAnnotations}
+                disabled={isLoading || maskCount === 0}
+                className="w-full"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Save Annotations
               </Button>
             </CardContent>
           </Card>
@@ -496,7 +660,9 @@ export default function Home() {
                 imageHeight={imageHeight}
                 result={result}
                 boxMode={boxMode}
+                pointMode={pointMode}
                 onBoxDrawn={handleBoxDrawn}
+                onPointClicked={handlePointClick}
                 isLoading={isLoading}
               />
             </CardContent>

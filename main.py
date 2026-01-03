@@ -94,7 +94,7 @@ def main():
     second = time.perf_counter()
     print(f"Model loaded in {second - start:.2f} seconds.")
     
-    image_path = "assets/images/test_image.jpg"
+    image_path = "mlx_sam3/assets/images/test_image.jpg"
     image = Image.open(image_path)
     width, height = image.size
     processor = Sam3Processor(model, confidence_threshold=0.5)

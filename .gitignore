@@ -13,3 +13,5 @@ wheels/
 sam3-mod-weights/
 vit_block/
 *.jpg
+
+annotations/
