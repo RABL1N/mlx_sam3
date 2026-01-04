@@ -11,8 +11,9 @@ import uuid
 from contextlib import asynccontextmanager
 
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from PIL import Image
 from pydantic import BaseModel
 import mlx.core as mx
@@ -419,25 +420,19 @@ async def reset_prompts(request: SessionRequest):
     try:
         state = session["state"]
         
-        # Preserve masks, boxes, scores, and category_ids before resetting prompts
-        preserved_masks = state.get("masks")
-        preserved_boxes = state.get("boxes")
-        preserved_scores = state.get("scores")
-        preserved_category_ids = state.get("category_ids")
-        
         start_time = time.perf_counter()
         processor.reset_all_prompts(state)
         processing_time_ms = (time.perf_counter() - start_time) * 1000
         
-        # Restore masks, boxes, scores, and category_ids if they existed
-        if preserved_masks is not None:
-            state["masks"] = preserved_masks
-        if preserved_boxes is not None:
-            state["boxes"] = preserved_boxes
-        if preserved_scores is not None:
-            state["scores"] = preserved_scores
-        if preserved_category_ids is not None:
-            state["category_ids"] = preserved_category_ids
+        # Clear all masks, boxes, scores, and category_ids
+        if "masks" in state:
+            del state["masks"]
+        if "boxes" in state:
+            del state["boxes"]
+        if "scores" in state:
+            del state["scores"]
+        if "category_ids" in state:
+            del state["category_ids"]
         
         # Clear all prompts
         if "prompted_boxes" in state:
@@ -447,7 +442,7 @@ async def reset_prompts(request: SessionRequest):
         
         return {
             "session_id": request.session_id,
-            "message": "All prompts reset",
+            "message": "All prompts and masks cleared",
             "results": serialize_state(state),
             "processing_time_ms": round(processing_time_ms, 2)
         }
@@ -643,6 +638,18 @@ async def save_annotations(request: SessionRequest):
         # Get image filename from session if available
         image_filename = session.get("image_filename", "image.jpg")
         image_id = int(os.path.splitext(os.path.basename(image_filename))[0]) if os.path.splitext(os.path.basename(image_filename))[0].isdigit() else 1
+        
+        # Save original image
+        saved_files = []
+        if "image" in session:
+            # Determine image extension from filename or default to jpg
+            _, ext = os.path.splitext(image_filename)
+            if not ext:
+                ext = ".jpg"
+            original_image_filename = f"{image_id}_original{ext}"
+            original_image_path = os.path.join(session_dir, original_image_filename)
+            session["image"].save(original_image_path)
+            saved_files.append(original_image_filename)
         
         # Save individual mask images
         saved_files = []
@@ -1194,6 +1201,204 @@ async def delete_session(session_id: str):
         del sessions[session_id]
         return {"message": "Session deleted"}
     raise HTTPException(status_code=404, detail="Session not found")
+
+
+@app.get("/list-sessions")
+async def list_sessions():
+    """List all available annotation sessions."""
+    try:
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(backend_dir))
+        annotations_dir = os.path.join(project_root, "annotations")
+        
+        if not os.path.exists(annotations_dir):
+            return {"sessions": []}
+        
+        sessions_list = []
+        for item in os.listdir(annotations_dir):
+            session_path = os.path.join(annotations_dir, item)
+            if os.path.isdir(session_path) and item.startswith("session_"):
+                # Look for annotations JSON file
+                json_files = [f for f in os.listdir(session_path) if f.endswith("_annotations.json")]
+                if json_files:
+                    json_path = os.path.join(session_path, json_files[0])
+                    try:
+                        import json
+                        with open(json_path, "r") as f:
+                            data = json.load(f)
+                            image_info = data.get("images", [{}])[0] if data.get("images") else {}
+                            num_annotations = len(data.get("annotations", []))
+                            
+                            sessions_list.append({
+                                "session_folder": item,
+                                "image_filename": image_info.get("file_name", "unknown"),
+                                "image_width": image_info.get("width", 0),
+                                "image_height": image_info.get("height", 0),
+                                "num_instances": num_annotations,
+                                "timestamp": item.replace("session_", "").replace("_", " "),
+                            })
+                    except Exception as e:
+                        # Skip invalid JSON files
+                        continue
+        
+        # Sort by timestamp (newest first)
+        sessions_list.sort(key=lambda x: x["timestamp"], reverse=True)
+        
+        return {"sessions": sessions_list}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing sessions: {str(e)}")
+
+
+class LoadSessionRequest(BaseModel):
+    session_folder: str
+
+
+@app.post("/load-session")
+async def load_session(request: LoadSessionRequest):
+    """Load a session from saved annotations. Automatically loads the original image from the session folder."""
+    if processor is None:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+    
+    session_folder_name = request.session_folder
+    
+    try:
+        # Load annotations JSON and find original image
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(backend_dir))
+        session_dir = os.path.join(project_root, "annotations", session_folder_name)
+        
+        if not os.path.exists(session_dir):
+            raise HTTPException(status_code=404, detail=f"Session folder not found: {session_folder_name}")
+        
+        json_files = [f for f in os.listdir(session_dir) if f.endswith("_annotations.json")]
+        if not json_files:
+            raise HTTPException(status_code=404, detail=f"No annotations JSON found in {session_folder_name}")
+        
+        json_path = os.path.join(session_dir, json_files[0])
+        import json
+        with open(json_path, "r") as f:
+            coco_data = json.load(f)
+        
+        # Find and load the original image from the session folder
+        # Look for files matching pattern: {image_id}_original.{ext}
+        image_id = coco_data.get("images", [{}])[0].get("id", 1)
+        original_image_files = [f for f in os.listdir(session_dir) if f.startswith(f"{image_id}_original.")]
+        
+        if not original_image_files:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Original image not found in {session_folder_name}. Expected file matching pattern: {image_id}_original.*"
+            )
+        
+        original_image_path = os.path.join(session_dir, original_image_files[0])
+        image = Image.open(original_image_path).convert("RGB")
+        
+        # Process image through model
+        start_time = time.perf_counter()
+        state = processor.set_image(image)
+        processing_time_ms = (time.perf_counter() - start_time) * 1000
+        
+        # Reconstruct state from annotations
+        annotations = coco_data.get("annotations", [])
+        if annotations:
+            masks_list = []
+            boxes_list = []
+            scores_list = []
+            category_ids_list = []
+            
+            img_w, img_h = image.size
+            for ann in annotations:
+                # Decode RLE mask
+                rle = ann.get("segmentation", {})
+                if rle:
+                    mask_binary = rle_to_mask(rle)
+                    # Resize mask to match image dimensions if needed
+                    mask_h, mask_w = mask_binary.shape
+                    if (mask_h, mask_w) != (img_h, img_w):
+                        mask_pil = Image.fromarray((mask_binary * 255).astype(np.uint8), mode="L")
+                        mask_pil = mask_pil.resize((img_w, img_h), Image.BILINEAR)
+                        mask_binary = (np.array(mask_pil) / 255.0 > 0.5).astype(np.float32)
+                    else:
+                        mask_binary = mask_binary.astype(np.float32)
+                    # Convert to MLX format [1, H, W]
+                    mask_mlx = mx.array(mask_binary[None, :, :])
+                    masks_list.append(mask_mlx)
+                
+                # Get bounding box
+                bbox = ann.get("bbox", [0, 0, 0, 0])
+                boxes_list.append(bbox)
+                
+                # Get score (default to 1.0 if not present)
+                score = ann.get("score", 1.0)
+                scores_list.append(score)
+                
+                # Get category_id
+                category_id = ann.get("category_id")
+                category_ids_list.append(category_id)
+            
+            # Convert to MLX arrays
+            if masks_list:
+                # Stack masks: [N, 1, H, W]
+                masks_array = mx.stack(masks_list, axis=0)
+                state["masks"] = masks_array
+                state["boxes"] = mx.array(boxes_list)
+                state["scores"] = mx.array(scores_list)
+                state["category_ids"] = category_ids_list
+        
+        # Create new session
+        session_id = str(uuid.uuid4())
+        sessions[session_id] = {
+            "state": state,
+            "image_size": image.size,
+            "image": image,
+            "image_filename": coco_data.get("images", [{}])[0].get("file_name", "image.jpg"),
+        }
+        
+        # Get the original image filename for the frontend
+        original_image_filename = original_image_files[0]
+        
+        return {
+            "session_id": session_id,
+            "width": image.size[0],
+            "height": image.size[1],
+            "message": f"Session loaded from {session_folder_name}",
+            "results": serialize_state(state),
+            "processing_time_ms": round(processing_time_ms, 2),
+            "image_url": f"/session-image/{session_folder_name}/{original_image_filename}"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading session: {str(e)}")
+
+
+@app.get("/session-image/{session_folder}/{filename}")
+async def get_session_image(session_folder: str, filename: str):
+    """Serve an image file from a session folder."""
+    try:
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(backend_dir))
+        image_path = os.path.join(project_root, "annotations", session_folder, filename)
+        
+        if not os.path.exists(image_path):
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Security check: ensure the path is within annotations directory
+        annotations_dir = os.path.join(project_root, "annotations")
+        real_image_path = os.path.realpath(image_path)
+        real_annotations_dir = os.path.realpath(annotations_dir)
+        
+        if not real_image_path.startswith(real_annotations_dir):
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        return FileResponse(image_path)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error serving image: {str(e)}")
 
 
 if __name__ == "__main__":

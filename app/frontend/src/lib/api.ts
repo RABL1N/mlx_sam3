@@ -181,3 +181,34 @@ export async function updateCategory(
   );
 }
 
+export interface SessionInfo {
+  session_folder: string;
+  image_filename: string;
+  image_width: number;
+  image_height: number;
+  num_instances: number;
+  timestamp: string;
+}
+
+export interface ListSessionsResponse {
+  sessions: SessionInfo[];
+}
+
+export async function listSessions(): Promise<ListSessionsResponse> {
+  return apiFetch<ListSessionsResponse>(() =>
+    fetch(`${API_BASE}/list-sessions`)
+  );
+}
+
+export async function loadSession(
+  sessionFolder: string
+): Promise<UploadResponse & { results: SegmentationResult; image_url?: string }> {
+  return apiFetch<UploadResponse & { results: SegmentationResult; image_url?: string }>(() =>
+    fetch(`${API_BASE}/load-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_folder: sessionFolder }),
+    })
+  );
+}
+

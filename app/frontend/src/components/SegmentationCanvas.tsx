@@ -157,6 +157,7 @@ export function SegmentationCanvas({
   const [hoveredInstanceIndex, setHoveredInstanceIndex] = useState<number | null>(null);
   const [pulsingInstanceIndex, setPulsingInstanceIndex] = useState<number | null>(null);
   const [pulseStartTime, setPulseStartTime] = useState<number | null>(null);
+  const justDrewBoxRef = useRef(false);
 
   // Calculate display scale to fit image in container responsively
   // Canvas must always fit within viewport, no minimum size constraint
@@ -576,7 +577,13 @@ export function SegmentationCanvas({
         label: pointMode === "positive",
       };
       setPoints((prev) => [...prev, newPoint]);
+      // Mark that we just added a point to prevent click event from interfering
+      justDrewBoxRef.current = true;
       onPointClicked([normalizedX, normalizedY], pointMode === "positive");
+      // Reset the flag after a short delay
+      setTimeout(() => {
+        justDrewBoxRef.current = false;
+      }, 100);
       return;
     }
 
@@ -649,11 +656,22 @@ export function SegmentationCanvas({
     const width = (x1 - x0) / imageWidth;
     const height = (y1 - y0) / imageHeight;
 
+    // Mark that we just drew a box to prevent click event from interfering
+    justDrewBoxRef.current = true;
     onBoxDrawn([centerX, centerY, width, height]);
 
     setIsDrawing(false);
     setStartPoint(null);
     setCurrentPoint(null);
+    
+    // Reset the flag after a short delay to allow click event to be ignored
+    setTimeout(() => {
+      justDrewBoxRef.current = false;
+    }, 100);
+    
+    // Prevent click event from firing
+    e.stopPropagation();
+    e.preventDefault();
   };
 
   const handleMouseLeave = () => {
@@ -680,41 +698,28 @@ export function SegmentationCanvas({
 
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    console.log("=== handleCanvasClick ===", {
-      boxMode,
-      pointMode,
-      isLoading,
-      hasOnInstanceClick: !!onInstanceClick,
-      hasResult: !!result,
-      numMasks: result?.masks?.length || 0,
-    });
+    // Ignore click if we just finished drawing a box or adding a point
+    if (justDrewBoxRef.current) {
+      return;
+    }
     
     // Don't prevent default - let mouseDown handle box/point modes
     // Only handle instance selection here when no modes are active
     if (boxMode !== null || pointMode !== null || isLoading) {
-      console.log("  -> Blocked: mode active or loading");
       return; // Let mouseDown handle it
     }
     
     if (!onInstanceClick || !result || !result.masks || result.masks.length === 0) {
-      console.log("  -> Cannot select instance:", {
-        hasOnInstanceClick: !!onInstanceClick,
-        hasResult: !!result,
-        hasMasks: !!(result && result.masks),
-        numMasks: result?.masks?.length || 0,
-      });
       return;
     }
     
     const coords = getCanvasCoordinates(e);
     if (!coords) {
-      console.log("No coords from click");
       return;
     }
     
     const canvas = canvasRef.current;
     if (!canvas) {
-      console.log("No canvas ref");
       return;
     }
     
@@ -723,18 +728,8 @@ export function SegmentationCanvas({
     const normalizedX = coords.x / displayWidth;
     const normalizedY = coords.y / displayHeight;
     
-    console.log("Checking for instance at:", { 
-      normalizedX, 
-      normalizedY, 
-      coords,
-      displayWidth,
-      displayHeight,
-      numMasks: result.masks.length 
-    });
-    
     // Check instances in reverse order (last drawn = top layer)
     for (let i = result.masks.length - 1; i >= 0; i--) {
-      const mask = result.masks[i];
       const box = result.boxes?.[i];
       
       // Use bounding box for selection (simpler and more reliable)
@@ -748,29 +743,19 @@ export function SegmentationCanvas({
         const x1 = x1_px / originalWidth;
         const y1 = y1_px / originalHeight;
         
-        console.log(`Checking instance ${i}: bbox pixels [${x0_px}, ${y0_px}, ${x1_px}, ${y1_px}], normalized [${x0.toFixed(3)}, ${y0.toFixed(3)}, ${x1.toFixed(3)}, ${y1.toFixed(3)}], click [${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}]`);
-        
         // Check if click is inside bounding box
         if (normalizedX >= x0 && normalizedX <= x1 && normalizedY >= y0 && normalizedY <= y1) {
-          console.log(`  -> ✓ INSIDE bbox! Selecting instance ${i}`);
           try {
-            console.log(`  -> Calling onInstanceClick(${i})...`);
             onInstanceClick(i);
-            console.log(`  -> ✓ Callback called successfully`);
             e.stopPropagation();
             e.preventDefault();
             return;
           } catch (error) {
-            console.error(`  -> ✗ Error calling onInstanceClick:`, error);
+            console.error("Error calling onInstanceClick:", error);
           }
-        } else {
-          console.log(`  -> Outside bbox`);
         }
-      } else {
-        console.log(`Instance ${i} has no bbox`);
       }
     }
-    console.log("No instance found at click location");
   };
 
   return (

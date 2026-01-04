@@ -36,8 +36,11 @@ import {
   saveAnnotations,
   removeInstance,
   updateCategory,
+  listSessions,
+  loadSession,
   type SegmentationResult,
   type RLEMask,
+  type SessionInfo,
 } from "@/lib/api";
 
 type BoxMode = "positive" | "negative" | null;
@@ -77,6 +80,11 @@ export default function Home() {
   >("checking");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const instancesListRef = useRef<HTMLDivElement>(null);
+  const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
+  const [selectedSessionFolder, setSelectedSessionFolder] = useState<string>("");
+  const [clearAllHoldProgress, setClearAllHoldProgress] = useState(0);
+  const clearAllTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const clearAllStartTimeRef = useRef<number | null>(null);
 
   // Timing state (server-side processing times)
   const [timings, setTimings] = useState<TimingEntry[]>([]);
@@ -109,6 +117,19 @@ export default function Home() {
     checkBackend();
     const interval = setInterval(checkBackend, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Load available sessions on mount
+  useEffect(() => {
+    const loadSessions = async () => {
+      try {
+        const response = await listSessions();
+        setAvailableSessions(response.sessions);
+      } catch (err) {
+        console.error("Error loading sessions:", err);
+      }
+    };
+    loadSessions();
   }, []);
 
   // Scroll to selected instance when it changes
@@ -160,6 +181,44 @@ export default function Home() {
       }
     },
     [addTiming]
+  );
+
+  const handleLoadSession = useCallback(
+    async () => {
+      if (!selectedSessionFolder) {
+        setError("Please select a session to load");
+        return;
+      }
+
+      setError(null);
+      setIsLoading(true);
+
+      try {
+        // Load session from backend (image is loaded automatically from session folder)
+        const response = await loadSession(selectedSessionFolder);
+        setSessionId(response.session_id);
+        setImageWidth(response.width);
+        setImageHeight(response.height);
+        setResult(response.results);
+        setTextPrompt("");
+        setPointMode(null);
+        setBoxMode(null);
+        setSelectedInstanceIndex(null);
+        addTiming("Load Session", response.processing_time_ms);
+        
+        // Set image URL from the response
+        if (response.image_url) {
+          const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+          setImageUrl(`${apiBase}${response.image_url}`);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load session");
+        setImageUrl(null);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [selectedSessionFolder, addTiming]
   );
 
   const handleDrop = useCallback(
@@ -263,6 +322,48 @@ export default function Home() {
     }
   };
 
+  const handleClearAllMouseDown = () => {
+    if (isLoading || !hasMasksOrPrompts) return;
+    
+    setClearAllHoldProgress(0);
+    clearAllStartTimeRef.current = Date.now();
+    
+    const updateProgress = () => {
+      if (!clearAllStartTimeRef.current) return;
+      
+      const elapsed = Date.now() - clearAllStartTimeRef.current;
+      const progress = Math.min((elapsed / 2000) * 100, 100);
+      setClearAllHoldProgress(progress);
+      
+      if (progress >= 100) {
+        handleReset();
+        handleClearAllMouseUp();
+      } else {
+        clearAllTimerRef.current = setTimeout(updateProgress, 16); // ~60fps
+      }
+    };
+    
+    clearAllTimerRef.current = setTimeout(updateProgress, 16);
+  };
+
+  const handleClearAllMouseUp = () => {
+    if (clearAllTimerRef.current) {
+      clearTimeout(clearAllTimerRef.current);
+      clearAllTimerRef.current = null;
+    }
+    clearAllStartTimeRef.current = null;
+    setClearAllHoldProgress(0);
+  };
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (clearAllTimerRef.current) {
+        clearTimeout(clearAllTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleSaveAnnotations = useCallback(async () => {
     if (!sessionId || !result || !result.masks || result.masks.length === 0) {
       setError("No masks to save. Please segment an image first.");
@@ -348,6 +449,7 @@ export default function Home() {
   const maskCount = result?.masks?.length ?? 0;
   const hasPrompts = (result?.prompted_boxes && result.prompted_boxes.length > 0) || 
                      (result?.prompted_points && result.prompted_points.length > 0);
+  const hasMasksOrPrompts = maskCount > 0 || hasPrompts;
 
   // Calculate average inference time (excluding upload)
   const inferenceTimings = timings.filter(
@@ -419,6 +521,57 @@ export default function Home() {
                   {imageWidth} × {imageHeight} px
                 </p>
               )}
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full mt-4"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Upload Image
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Load Session Card */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Download className="w-4 h-4" />
+                Load Session
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Load a previous annotation session to continue editing.
+              </p>
+              <select
+                value={selectedSessionFolder}
+                onChange={(e) => setSelectedSessionFolder(e.target.value)}
+                disabled={isLoading || availableSessions.length === 0}
+                className="w-full text-sm px-3 py-2 bg-card border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Select a session...</option>
+                {availableSessions.map((session) => (
+                  <option key={session.session_folder} value={session.session_folder}>
+                    {session.timestamp} - {session.image_filename} ({session.num_instances} instances)
+                  </option>
+                ))}
+              </select>
+                <Button
+                variant="default"
+                size="sm"
+                onClick={handleLoadSession}
+                disabled={isLoading || !selectedSessionFolder}
+                className="w-full"
+                >
+                  {isLoading ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                  <Download className="w-4 h-4 mr-2" />
+                  )}
+                Load Session
+                </Button>
             </CardContent>
           </Card>
 
@@ -560,47 +713,6 @@ export default function Home() {
             </CardContent>
           </Card>
 
-          {/* Results & Actions */}
-          <Card className={!sessionId ? "opacity-50 pointer-events-none" : ""}>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Results</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Objects found:</span>
-                <span className="font-medium text-primary">{maskCount}</span>
-              </div>
-              {result?.prompted_boxes && result.prompted_boxes.length > 0 && (
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Box prompts:</span>
-                  <span className="font-medium">
-                    {result.prompted_boxes.length}
-                  </span>
-                </div>
-              )}
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleReset}
-                disabled={isLoading || !hasPrompts}
-                className="w-full"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Clear All Prompts
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={handleSaveAnnotations}
-                disabled={isLoading || maskCount === 0}
-                className="w-full"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Save Annotations
-              </Button>
-            </CardContent>
-          </Card>
-
           {/* Performance Card */}
           <Card>
             <CardHeader className="pb-3">
@@ -735,16 +847,16 @@ export default function Home() {
             <div className="mt-4 flex flex-wrap items-center justify-between gap-4 text-xs text-muted-foreground animate-fade-in-up">
               {/* Keyboard Shortcuts */}
               <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
-                    Click + Drag
-                  </kbd>
-                  <span>Draw box</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
+              <div className="flex items-center gap-2">
+                <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
+                  Click + Drag
+                </kbd>
+                <span>Draw box</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
                     Click
-                  </kbd>
+                </kbd>
                   <span>Add point prompt</span>
                 </div>
               </div>
@@ -796,8 +908,11 @@ export default function Home() {
                   {(() => {
                     const total = result.masks.length;
                     const labeled = result.category_ids?.filter(id => id !== null && id !== undefined).length ?? 0;
-                    const unlabeled = total - labeled;
-                    return `${labeled}/${total} labeled${unlabeled > 0 ? ` (${unlabeled} unlabeled)` : ''}`;
+                    return (
+                      <span>
+                        Labeled Instances: <span className="font-medium text-primary">{labeled}/{total}</span>
+                      </span>
+                    );
                   })()}
                 </p>
               )}
@@ -879,13 +994,12 @@ export default function Home() {
                                 </select>
                               </div>
                             ) : (
-                              <div className="text-xs text-muted-foreground">
-                                {categoryName ? (
-                                  <span>Class: {categoryName}</span>
-                                ) : (
-                                  <span>Class: None</span>
-                                )}
-                              </div>
+                            <div className="text-xs text-muted-foreground">
+                                <div>Class:</div>
+                                <div className="font-medium">
+                                  {categoryName || "None"}
+                                </div>
+                            </div>
                             )}
                           </div>
                         </div>
@@ -897,9 +1011,9 @@ export default function Home() {
                             handleRemoveInstance(index);
                           }}
                           disabled={isLoading}
-                          className="flex-shrink-0 h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                          className="flex-shrink-0 h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10 transition-transform hover:scale-110"
                         >
-                          <X className="w-4 h-4" />
+                          <Trash2 className="w-4 h-4 transition-transform hover:rotate-12" />
                         </Button>
                       </div>
                     );
@@ -912,6 +1026,44 @@ export default function Home() {
                   Use point or box prompts to segment instances.
                 </p>
               )}
+              <div className="mt-4 pt-4 border-t border-border">
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleSaveAnnotations}
+                  disabled={isLoading || maskCount === 0}
+                  className="w-full"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Save Session
+                </Button>
+                <div className="pt-4">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onMouseDown={handleClearAllMouseDown}
+                    onMouseUp={handleClearAllMouseUp}
+                    onMouseLeave={handleClearAllMouseUp}
+                    disabled={isLoading || !hasMasksOrPrompts}
+                    className="w-full relative overflow-hidden"
+                  >
+                    <div className="absolute inset-0 bg-destructive/20" style={{ width: `${clearAllHoldProgress}%`, transition: 'width 0.05s linear' }} />
+                    <div className="relative flex items-center justify-center">
+                      {clearAllHoldProgress > 0 ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          <span>Hold to Clear ({Math.ceil((100 - clearAllHoldProgress) / 100 * 2)}s)</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          <span>Clear All</span>
+                        </>
+                      )}
+                    </div>
+                  </Button>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </aside>
