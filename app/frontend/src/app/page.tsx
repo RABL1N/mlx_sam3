@@ -73,6 +73,7 @@ export default function Home() {
     "checking" | "online" | "offline"
   >("checking");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const instancesListRef = useRef<HTMLDivElement>(null);
 
   // Timing state (server-side processing times)
   const [timings, setTimings] = useState<TimingEntry[]>([]);
@@ -106,6 +107,21 @@ export default function Home() {
     const interval = setInterval(checkBackend, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  // Scroll to selected instance when it changes
+  useEffect(() => {
+    if (selectedInstanceIndex !== null && instancesListRef.current) {
+      const instanceElement = document.getElementById(`instance-${selectedInstanceIndex}`);
+      if (instanceElement && instancesListRef.current) {
+        // Scroll the instance into view within the scrollable container
+        instanceElement.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'nearest',
+        });
+      }
+    }
+  }, [selectedInstanceIndex]);
 
   const handleFileSelect = useCallback(
     async (file: File) => {
@@ -728,6 +744,7 @@ export default function Home() {
                 pointMode={pointMode}
                 onBoxDrawn={handleBoxDrawn}
                 onPointClicked={handlePointClick}
+                onInstanceClick={(index) => setSelectedInstanceIndex(index)}
                 isLoading={isLoading}
               />
             </CardContent>
@@ -768,7 +785,7 @@ export default function Home() {
             </CardHeader>
             <CardContent>
               {result?.masks && result.masks.length > 0 ? (
-                <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                <div ref={instancesListRef} className="space-y-2 max-h-[600px] overflow-y-auto">
                   {result.masks.map((mask, index) => {
                     const categoryId = result.category_ids?.[index] ?? null;
                     const box = result.boxes?.[index];
@@ -798,6 +815,7 @@ export default function Home() {
                     return (
                       <div
                         key={index}
+                        id={`instance-${index}`}
                         onClick={() => setSelectedInstanceIndex(isSelected ? null : index)}
                         className={`flex items-center justify-between p-3 border rounded-lg transition-colors cursor-pointer ${
                           isSelected

@@ -18,6 +18,7 @@ interface Props {
   pointMode: "positive" | "negative" | null; // null means point mode is off
   onBoxDrawn: (box: number[]) => void;
   onPointClicked?: (point: number[], label: boolean) => void; // [x, y] normalized
+  onInstanceClick?: (index: number) => void; // Called when an instance is clicked
   isLoading: boolean;
 }
 
@@ -69,6 +70,60 @@ function decodeRLEToImageData(rle: RLEMask, color: number[]): ImageData | null {
   return imageData;
 }
 
+/**
+ * Check if a normalized point [x, y] (0-1 range) is within an RLE mask.
+ * The point is in normalized image coordinates [0, 1], and we need to convert
+ * it to mask pixel coordinates based on the mask's size.
+ */
+function isPointInRLEMask(
+  point: [number, number],
+  rle: RLEMask
+): boolean {
+  const [maskHeight, maskWidth] = rle.size;
+  if (maskHeight === 0 || maskWidth === 0) return false;
+
+  // Convert normalized point [0, 1] to mask pixel coordinates
+  // The point is already normalized to image coordinates, so we can directly
+  // scale it by the mask dimensions
+  const maskX = Math.floor(point[0] * maskWidth);
+  const maskY = Math.floor(point[1] * maskHeight);
+
+  // Clamp to mask bounds
+  if (maskX < 0 || maskX >= maskWidth || maskY < 0 || maskY >= maskHeight) {
+    return false;
+  }
+
+  // Decode RLE to check the specific pixel
+  // Calculate the target pixel index once
+  const targetIdx = maskY * maskWidth + maskX;
+  let counts: number[];
+  
+  // Handle both array and string formats for counts
+  if (typeof rle.counts === 'string') {
+    counts = rle.counts.split(' ').map(Number).filter(n => !isNaN(n));
+  } else {
+    counts = rle.counts;
+  }
+
+  let pixelIdx = 0;
+  let isForeground = false; // RLE starts with background count
+
+  for (const count of counts) {
+    const endIdx = pixelIdx + count;
+
+    // Check if target pixel is within this run
+    if (targetIdx >= pixelIdx && targetIdx < endIdx) {
+      return isForeground;
+    }
+
+    // Move to next run
+    pixelIdx = endIdx;
+    isForeground = !isForeground;
+  }
+
+  return false;
+}
+
 export function SegmentationCanvas({
   imageUrl,
   imageWidth,
@@ -78,6 +133,7 @@ export function SegmentationCanvas({
   pointMode,
   onBoxDrawn,
   onPointClicked,
+  onInstanceClick,
   isLoading,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -94,6 +150,7 @@ export function SegmentationCanvas({
   } | null>(null);
   const [displayScale, setDisplayScale] = useState(1);
   const [points, setPoints] = useState<Point[]>([]);
+  const [hoveredInstanceIndex, setHoveredInstanceIndex] = useState<number | null>(null);
 
   // Calculate display scale to fit image in container
   useEffect(() => {
@@ -187,6 +244,7 @@ export function SegmentationCanvas({
         const categoryId = result.category_ids?.[i] ?? null;
         const categoryName = categoryId ? categoryNames[categoryId] || `Cat ${categoryId}` : null;
         const color = COLORS[i % COLORS.length];
+        const isHovered = hoveredInstanceIndex === i;
 
         // Decode RLE mask and draw
         if (mask && mask.counts && mask.size) {
@@ -206,21 +264,42 @@ export function SegmentationCanvas({
           offCtx.putImageData(maskImageData, 0, 0);
 
           // Composite onto main canvas with transparency (GPU-accelerated scaling & blending)
-          ctx.globalAlpha = 0.5;
+          // Add pulse animation when hovered
+          if (isHovered) {
+            // Pulse effect: oscillate opacity between 0.5 and 0.7 (subtle)
+            const time = Date.now() / 1000; // Current time in seconds
+            const pulseSpeed = 0.8; // Speed of pulse (cycles per second) - slower for subtlety
+            const pulseRange = 0.2; // Range of opacity change (smaller for subtlety)
+            const baseOpacity = 0.5;
+            const pulseOpacity = baseOpacity + (Math.sin(time * pulseSpeed * Math.PI * 2) * pulseRange + pulseRange) / 2;
+            ctx.globalAlpha = pulseOpacity;
+          } else {
+            ctx.globalAlpha = 0.5;
+          }
           ctx.drawImage(offscreen, 0, 0, displayWidth, displayHeight);
           ctx.globalAlpha = 1.0;
         }
 
-        // Draw bounding box
+        // Draw bounding box (no hover effect on border, pulse is on mask)
+        // Boxes are in pixel coordinates, need to normalize then scale
         if (box) {
-          const [x0, y0, x1, y1] = box;
+          const [x0_px, y0_px, x1_px, y1_px] = box;
+          // Normalize from pixel coordinates to [0, 1]
+          const originalWidth = result.original_width || imageWidth;
+          const originalHeight = result.original_height || imageHeight;
+          const x0 = x0_px / originalWidth;
+          const y0 = y0_px / originalHeight;
+          const x1 = x1_px / originalWidth;
+          const y1 = y1_px / originalHeight;
+          
+          // Standard border (no hover effect)
           ctx.strokeStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
           ctx.lineWidth = 2;
           ctx.strokeRect(
-            x0 * displayScale,
-            y0 * displayScale,
-            (x1 - x0) * displayScale,
-            (y1 - y0) * displayScale
+            x0 * displayWidth,
+            y0 * displayHeight,
+            (x1 - x0) * displayWidth,
+            (y1 - y0) * displayHeight
           );
 
           // Draw category label (or "None" if no category)
@@ -231,12 +310,12 @@ export function SegmentationCanvas({
           const labelWidth = Math.max(textWidth + 8, 50);
           
           ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
-          ctx.fillRect(x0 * displayScale, y0 * displayScale - 24, labelWidth, 20);
+          ctx.fillRect(x0 * displayWidth, y0 * displayHeight - 24, labelWidth, 20);
           ctx.fillStyle = "#000";
           ctx.fillText(
             labelText,
-            x0 * displayScale + 4,
-            y0 * displayScale - 8
+            x0 * displayWidth + 4,
+            y0 * displayHeight - 8
           );
         }
       }
@@ -311,78 +390,182 @@ export function SegmentationCanvas({
     currentPoint,
     boxMode,
     points,
+    hoveredInstanceIndex,
   ]);
 
   useEffect(() => {
     drawCanvas();
   }, [drawCanvas]);
 
+  // Animation loop for pulse effect when hovering
+  useEffect(() => {
+    if (hoveredInstanceIndex === null) return;
+    
+    let animationFrameId: number;
+    const animate = () => {
+      drawCanvas();
+      animationFrameId = requestAnimationFrame(animate);
+    };
+    animate();
+    
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [hoveredInstanceIndex, drawCanvas]);
+
   const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
 
     const rect = canvas.getBoundingClientRect();
+    // Account for CSS scaling if canvas display size differs from internal size
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
     };
+  };
+
+  const getInstanceAtPoint = (coords: { x: number; y: number }): number | null => {
+    console.log("getInstanceAtPoint called:", { coords });
+    if (!result || !result.masks || result.masks.length === 0) {
+      console.log("  -> No result or masks");
+      return null;
+    }
+    
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      console.log("  -> No canvas ref");
+      return null;
+    }
+    
+    const displayWidth = canvas.width;
+    const displayHeight = canvas.height;
+    const normalizedX = coords.x / displayWidth;
+    const normalizedY = coords.y / displayHeight;
+    
+    // Get original image dimensions for normalizing bounding boxes
+    const originalWidth = result.original_width || imageWidth;
+    const originalHeight = result.original_height || imageHeight;
+    
+    console.log("  -> Normalized coords:", { normalizedX, normalizedY, displayWidth, displayHeight });
+    console.log("  -> Original image size:", { originalWidth, originalHeight });
+    console.log("  -> Checking", result.masks.length, "instances");
+    
+    // Check instances in reverse order (last drawn = top layer)
+    for (let i = result.masks.length - 1; i >= 0; i--) {
+      const box = result.boxes?.[i];
+      if (box) {
+        const [x0_px, y0_px, x1_px, y1_px] = box;
+        // Normalize bounding box coordinates from pixels to [0, 1]
+        const x0 = x0_px / originalWidth;
+        const y0 = y0_px / originalHeight;
+        const x1 = x1_px / originalWidth;
+        const y1 = y1_px / originalHeight;
+        
+        console.log(`  -> Instance ${i}: bbox pixels [${x0_px}, ${y0_px}, ${x1_px}, ${y1_px}], normalized [${x0.toFixed(3)}, ${y0.toFixed(3)}, ${x1.toFixed(3)}, ${y1.toFixed(3)}]`);
+        if (normalizedX >= x0 && normalizedX <= x1 && normalizedY >= y0 && normalizedY <= y1) {
+          console.log(`  -> ✓ Found instance ${i} at point!`);
+          return i;
+        } else {
+          console.log(`  -> Outside bbox (click: [${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}])`);
+        }
+      } else {
+        console.log(`  -> Instance ${i} has no bbox`);
+      }
+    }
+    console.log("  -> No instance found");
+    return null;
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isLoading) return;
     
+    const coords = getCanvasCoordinates(e);
+    if (!coords) return;
+
     // Handle point clicks
     if (pointMode !== null && onPointClicked) {
-      const coords = getCanvasCoordinates(e);
-      if (coords) {
-        // Check if clicking on an existing point (to remove it)
-        const clickRadius = 12;
-        const clickedPointIndex = points.findIndex((p) => {
-          const px = p.x * displayScale;
-          const py = p.y * displayScale;
-          const dist = Math.sqrt(
-            Math.pow(coords.x - px, 2) + Math.pow(coords.y - py, 2)
-          );
-          return dist < clickRadius;
-        });
+      // Check if clicking on an existing point (to remove it)
+      const clickRadius = 12;
+      const clickedPointIndex = points.findIndex((p) => {
+        const px = p.x * displayScale;
+        const py = p.y * displayScale;
+        const dist = Math.sqrt(
+          Math.pow(coords.x - px, 2) + Math.pow(coords.y - py, 2)
+        );
+        return dist < clickRadius;
+      });
 
-        if (clickedPointIndex !== -1) {
-          // Remove the clicked point
-          setPoints((prev) => prev.filter((_, i) => i !== clickedPointIndex));
-          return;
-        }
-
-        // Add new point
-        const normalizedX = coords.x / displayScale / imageWidth;
-        const normalizedY = coords.y / displayScale / imageHeight;
-        const newPoint: Point = {
-          x: normalizedX * imageWidth,
-          y: normalizedY * imageHeight,
-          label: pointMode === "positive",
-        };
-        setPoints((prev) => [...prev, newPoint]);
-        onPointClicked([normalizedX, normalizedY], pointMode === "positive");
+      if (clickedPointIndex !== -1) {
+        // Remove the clicked point
+        setPoints((prev) => prev.filter((_, i) => i !== clickedPointIndex));
+        return;
       }
+
+      // Add new point
+      const normalizedX = coords.x / displayScale / imageWidth;
+      const normalizedY = coords.y / displayScale / imageHeight;
+      const newPoint: Point = {
+        x: normalizedX * imageWidth,
+        y: normalizedY * imageHeight,
+        label: pointMode === "positive",
+      };
+      setPoints((prev) => [...prev, newPoint]);
+      onPointClicked([normalizedX, normalizedY], pointMode === "positive");
       return;
     }
 
     // Handle box drawing (only if box mode is enabled and point mode is disabled)
     if (boxMode !== null && pointMode === null) {
-      const coords = getCanvasCoordinates(e);
-      if (coords) {
-        setIsDrawing(true);
-        setStartPoint(coords);
-        setCurrentPoint(coords);
-      }
+      setIsDrawing(true);
+      setStartPoint(coords);
+      setCurrentPoint(coords);
+      return;
     }
+
+    // Instance selection is handled by onClick handler
+    // Don't handle it here to avoid conflicts with box/point modes
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (pointMode !== null || boxMode === null) return; // Don't draw boxes if point mode is active or box mode is disabled
-    if (!isDrawing) return;
-    const coords = getCanvasCoordinates(e);
-    if (coords) {
-      setCurrentPoint(coords);
+    console.log("=== handleMouseMove ===", {
+      boxMode,
+      pointMode,
+      isDrawing,
+      hasResult: !!result,
+      numMasks: result?.masks?.length || 0,
+    });
+    
+    // Handle box drawing
+    if (boxMode !== null && pointMode === null && isDrawing) {
+      const coords = getCanvasCoordinates(e);
+      if (coords) {
+        setCurrentPoint(coords);
+      }
+      return;
+    }
+    
+    // Handle hover for instance selection (when no modes are active)
+    if (boxMode === null && pointMode === null && result && result.masks && result.masks.length > 0) {
+      console.log("  -> Checking for hover...");
+      const coords = getCanvasCoordinates(e);
+      if (coords) {
+        console.log("  -> Got coords:", coords);
+        const instanceIndex = getInstanceAtPoint(coords);
+        console.log("  -> Hovered instance:", instanceIndex);
+        setHoveredInstanceIndex(instanceIndex);
+      } else {
+        console.log("  -> No coords");
+        setHoveredInstanceIndex(null);
+      }
+    } else {
+      console.log("  -> Not in selection mode or no instances");
+      setHoveredInstanceIndex(null);
     }
   };
 
@@ -427,6 +610,7 @@ export function SegmentationCanvas({
   };
 
   const handleMouseLeave = () => {
+    setHoveredInstanceIndex(null);
     if (isDrawing) {
       setIsDrawing(false);
       setStartPoint(null);
@@ -447,11 +631,107 @@ export function SegmentationCanvas({
     );
   }
 
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    console.log("=== handleCanvasClick ===", {
+      boxMode,
+      pointMode,
+      isLoading,
+      hasOnInstanceClick: !!onInstanceClick,
+      hasResult: !!result,
+      numMasks: result?.masks?.length || 0,
+    });
+    
+    // Don't prevent default - let mouseDown handle box/point modes
+    // Only handle instance selection here when no modes are active
+    if (boxMode !== null || pointMode !== null || isLoading) {
+      console.log("  -> Blocked: mode active or loading");
+      return; // Let mouseDown handle it
+    }
+    
+    if (!onInstanceClick || !result || !result.masks || result.masks.length === 0) {
+      console.log("  -> Cannot select instance:", {
+        hasOnInstanceClick: !!onInstanceClick,
+        hasResult: !!result,
+        hasMasks: !!(result && result.masks),
+        numMasks: result?.masks?.length || 0,
+      });
+      return;
+    }
+    
+    const coords = getCanvasCoordinates(e);
+    if (!coords) {
+      console.log("No coords from click");
+      return;
+    }
+    
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      console.log("No canvas ref");
+      return;
+    }
+    
+    const displayWidth = canvas.width;
+    const displayHeight = canvas.height;
+    const normalizedX = coords.x / displayWidth;
+    const normalizedY = coords.y / displayHeight;
+    
+    console.log("Checking for instance at:", { 
+      normalizedX, 
+      normalizedY, 
+      coords,
+      displayWidth,
+      displayHeight,
+      numMasks: result.masks.length 
+    });
+    
+    // Check instances in reverse order (last drawn = top layer)
+    for (let i = result.masks.length - 1; i >= 0; i--) {
+      const mask = result.masks[i];
+      const box = result.boxes?.[i];
+      
+      // Use bounding box for selection (simpler and more reliable)
+      if (box) {
+        const [x0_px, y0_px, x1_px, y1_px] = box;
+        // Normalize bounding box coordinates from pixels to [0, 1]
+        const originalWidth = result.original_width || imageWidth;
+        const originalHeight = result.original_height || imageHeight;
+        const x0 = x0_px / originalWidth;
+        const y0 = y0_px / originalHeight;
+        const x1 = x1_px / originalWidth;
+        const y1 = y1_px / originalHeight;
+        
+        console.log(`Checking instance ${i}: bbox pixels [${x0_px}, ${y0_px}, ${x1_px}, ${y1_px}], normalized [${x0.toFixed(3)}, ${y0.toFixed(3)}, ${x1.toFixed(3)}, ${y1.toFixed(3)}], click [${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}]`);
+        
+        // Check if click is inside bounding box
+        if (normalizedX >= x0 && normalizedX <= x1 && normalizedY >= y0 && normalizedY <= y1) {
+          console.log(`  -> ✓ INSIDE bbox! Selecting instance ${i}`);
+          try {
+            console.log(`  -> Calling onInstanceClick(${i})...`);
+            onInstanceClick(i);
+            console.log(`  -> ✓ Callback called successfully`);
+            e.stopPropagation();
+            e.preventDefault();
+            return;
+          } catch (error) {
+            console.error(`  -> ✗ Error calling onInstanceClick:`, error);
+          }
+        } else {
+          console.log(`  -> Outside bbox`);
+        }
+      } else {
+        console.log(`Instance ${i} has no bbox`);
+      }
+    }
+    console.log("No instance found at click location");
+  };
+
   return (
     <div ref={containerRef} className="relative">
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
+        onClick={handleCanvasClick}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
@@ -463,7 +743,11 @@ export function SegmentationCanvas({
             ? "wait"
             : pointMode !== null
             ? "crosshair"
-            : "crosshair",
+            : boxMode !== null
+            ? "crosshair"
+            : result && result.masks && result.masks.length > 0
+            ? "pointer"
+            : "default",
         }}
       />
       {isLoading && (
