@@ -559,10 +559,13 @@ async def add_point_prompt(request: PointPromptRequest):
                         state["masks"] = state["masks"][:-1]
                         # Remove last box from MLX array
                         state["boxes"] = state["boxes"][:-1]
-                        if state["category_ids"]:
+                        if state.get("category_ids") and len(state["category_ids"]) > 0:
                             state["category_ids"] = state["category_ids"][:-1]
-                        if "scores" in state and state["scores"]:
-                            state["scores"] = state["scores"][:-1]
+                        if "scores" in state and state["scores"] is not None:
+                            # Check if scores has length > 0 (handle both MLX arrays and lists)
+                            scores_len = state["scores"].shape[0] if hasattr(state["scores"], 'shape') else len(state["scores"])
+                            if scores_len > 0:
+                                state["scores"] = state["scores"][:-1]
                         # Remove the point from prompted_points since we're rejecting it
                         if "prompted_points" in state and state["prompted_points"]:
                             state["prompted_points"] = state["prompted_points"][:-1]

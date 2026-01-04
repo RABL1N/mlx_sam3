@@ -59,10 +59,7 @@
   background: var(--color-muted-foreground);
 }
 
-/* Canvas cursor */
-canvas {
-  cursor: crosshair;
-}
+/* Canvas cursor - handled inline in component */
 
 /* Animations */
 @keyframes pulse-glow {

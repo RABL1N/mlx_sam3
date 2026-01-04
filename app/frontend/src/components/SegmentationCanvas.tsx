@@ -431,15 +431,12 @@ export function SegmentationCanvas({
   };
 
   const getInstanceAtPoint = (coords: { x: number; y: number }): number | null => {
-    console.log("getInstanceAtPoint called:", { coords });
     if (!result || !result.masks || result.masks.length === 0) {
-      console.log("  -> No result or masks");
       return null;
     }
     
     const canvas = canvasRef.current;
     if (!canvas) {
-      console.log("  -> No canvas ref");
       return null;
     }
     
@@ -452,10 +449,6 @@ export function SegmentationCanvas({
     const originalWidth = result.original_width || imageWidth;
     const originalHeight = result.original_height || imageHeight;
     
-    console.log("  -> Normalized coords:", { normalizedX, normalizedY, displayWidth, displayHeight });
-    console.log("  -> Original image size:", { originalWidth, originalHeight });
-    console.log("  -> Checking", result.masks.length, "instances");
-    
     // Check instances in reverse order (last drawn = top layer)
     for (let i = result.masks.length - 1; i >= 0; i--) {
       const box = result.boxes?.[i];
@@ -467,18 +460,11 @@ export function SegmentationCanvas({
         const x1 = x1_px / originalWidth;
         const y1 = y1_px / originalHeight;
         
-        console.log(`  -> Instance ${i}: bbox pixels [${x0_px}, ${y0_px}, ${x1_px}, ${y1_px}], normalized [${x0.toFixed(3)}, ${y0.toFixed(3)}, ${x1.toFixed(3)}, ${y1.toFixed(3)}]`);
         if (normalizedX >= x0 && normalizedX <= x1 && normalizedY >= y0 && normalizedY <= y1) {
-          console.log(`  -> ✓ Found instance ${i} at point!`);
           return i;
-        } else {
-          console.log(`  -> Outside bbox (click: [${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}])`);
         }
-      } else {
-        console.log(`  -> Instance ${i} has no bbox`);
       }
     }
-    console.log("  -> No instance found");
     return null;
   };
 
@@ -533,14 +519,6 @@ export function SegmentationCanvas({
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    console.log("=== handleMouseMove ===", {
-      boxMode,
-      pointMode,
-      isDrawing,
-      hasResult: !!result,
-      numMasks: result?.masks?.length || 0,
-    });
-    
     // Handle box drawing
     if (boxMode !== null && pointMode === null && isDrawing) {
       const coords = getCanvasCoordinates(e);
@@ -552,19 +530,14 @@ export function SegmentationCanvas({
     
     // Handle hover for instance selection (when no modes are active)
     if (boxMode === null && pointMode === null && result && result.masks && result.masks.length > 0) {
-      console.log("  -> Checking for hover...");
       const coords = getCanvasCoordinates(e);
       if (coords) {
-        console.log("  -> Got coords:", coords);
         const instanceIndex = getInstanceAtPoint(coords);
-        console.log("  -> Hovered instance:", instanceIndex);
         setHoveredInstanceIndex(instanceIndex);
       } else {
-        console.log("  -> No coords");
         setHoveredInstanceIndex(null);
       }
     } else {
-      console.log("  -> Not in selection mode or no instances");
       setHoveredInstanceIndex(null);
     }
   };
@@ -745,7 +718,7 @@ export function SegmentationCanvas({
             ? "crosshair"
             : boxMode !== null
             ? "crosshair"
-            : result && result.masks && result.masks.length > 0
+            : hoveredInstanceIndex !== null
             ? "pointer"
             : "default",
         }}
