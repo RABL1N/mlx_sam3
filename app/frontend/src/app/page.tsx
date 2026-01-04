@@ -819,9 +819,14 @@ export default function Home() {
                 <Layers className="w-4 h-4" />
                 Segmented Instances
               </CardTitle>
-              {selectedInstanceIndex !== null && (
+              {result?.masks && result.masks.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-2">
-                  Instance {selectedInstanceIndex + 1} selected.
+                  {(() => {
+                    const total = result.masks.length;
+                    const labeled = result.category_ids?.filter(id => id !== null && id !== undefined).length ?? 0;
+                    const unlabeled = total - labeled;
+                    return `${labeled}/${total} labeled${unlabeled > 0 ? ` (${unlabeled} unlabeled)` : ''}`;
+                  })()}
                 </p>
               )}
             </CardHeader>
