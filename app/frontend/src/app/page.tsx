@@ -370,7 +370,7 @@ export default function Home() {
               <h1 className="text-2xl font-bold tracking-tight">SAM3 Studio</h1>
               <p className="text-sm text-muted-foreground">
                 Interactive segmentation with<br />
-                text & box prompts
+                box & point prompts
               </p>
             </div>
           </div>
@@ -946,7 +946,7 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="max-w-7xl mx-auto mt-12 pt-6 border-t border-border">
+      <footer className="max-w-[1600px] mx-auto mt-12 pt-6 border-t border-border">
         <p className="text-xs text-muted-foreground text-center">
           SAM3 Interactive Segmentation • MLX Backend • Next.js Frontend
         </p>
