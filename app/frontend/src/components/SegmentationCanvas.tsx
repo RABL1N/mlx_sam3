@@ -158,18 +158,47 @@ export function SegmentationCanvas({
   const [pulsingInstanceIndex, setPulsingInstanceIndex] = useState<number | null>(null);
   const [pulseStartTime, setPulseStartTime] = useState<number | null>(null);
 
-  // Calculate display scale to fit image in container
+  // Calculate display scale to fit image in container responsively
+  // Canvas must always fit within viewport, no minimum size constraint
   useEffect(() => {
     if (!containerRef.current || !imageWidth || !imageHeight) return;
 
-    const containerWidth = containerRef.current.clientWidth;
-    const maxHeight = window.innerHeight * 0.7;
+    const updateScale = () => {
+      if (!containerRef.current) return;
+      
+      const containerWidth = containerRef.current.clientWidth;
+      // Use available viewport height minus header, padding, and other UI elements
+      const availableHeight = window.innerHeight - 200; // Account for header, padding, etc.
+      const containerHeight = Math.max(availableHeight, 400); // Minimum 400px but prefer available space
+      
+      // Calculate scale to fit container - always fit, no minimum size
+      const scaleX = containerWidth / imageWidth;
+      const scaleY = containerHeight / imageHeight;
+      
+      // Use the smaller scale to ensure it fits both dimensions
+      let scale = Math.min(scaleX, scaleY, 1);
+      
+      // Never upscale beyond original size
+      scale = Math.min(scale, 1);
 
-    const scaleX = containerWidth / imageWidth;
-    const scaleY = maxHeight / imageHeight;
-    const scale = Math.min(scaleX, scaleY, 1);
+      setDisplayScale(scale);
+    };
 
-    setDisplayScale(scale);
+    updateScale();
+    
+    // Listen for window resize to update scale
+    window.addEventListener('resize', updateScale);
+    
+    // Also use ResizeObserver for container size changes
+    const resizeObserver = new ResizeObserver(updateScale);
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
+    
+    return () => {
+      window.removeEventListener('resize', updateScale);
+      resizeObserver.disconnect();
+    };
   }, [imageWidth, imageHeight]);
 
   // Load and draw image
@@ -745,7 +774,7 @@ export function SegmentationCanvas({
   };
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className="relative w-full max-w-full overflow-hidden">
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
@@ -753,7 +782,7 @@ export function SegmentationCanvas({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
-        className={`rounded-lg shadow-xl ${
+        className={`rounded-lg shadow-xl max-w-full h-auto ${
           isLoading ? "opacity-50 pointer-events-none" : ""
         }`}
         style={{

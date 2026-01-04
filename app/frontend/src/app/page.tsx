@@ -346,6 +346,8 @@ export default function Home() {
   );
 
   const maskCount = result?.masks?.length ?? 0;
+  const hasPrompts = (result?.prompted_boxes && result.prompted_boxes.length > 0) || 
+                     (result?.prompted_points && result.prompted_points.length > 0);
 
   // Calculate average inference time (excluding upload)
   const inferenceTimings = timings.filter(
@@ -358,10 +360,10 @@ export default function Home() {
       : null;
 
   return (
-    <main className="min-h-screen p-6 md:p-8">
+    <main className="min-h-screen p-4 md:p-6 overflow-x-hidden">
       {/* Header */}
-      <header className="max-w-[1600px] mx-auto mb-8">
-        <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-6">
+      <header className="w-full max-w-[1600px] mx-auto mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-4 lg:gap-6">
           <div className="flex items-center gap-5">
             <div className="p-2 bg-primary/20 rounded-lg pulse-glow">
               <Sparkles className="w-6 h-6 text-primary" />
@@ -379,7 +381,7 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-6">
+      <div className="w-full max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-4 lg:gap-6">
         {/* Sidebar Controls */}
         <aside className="space-y-4">
           {/* Upload Card */}
@@ -417,36 +419,6 @@ export default function Home() {
                   {imageWidth} × {imageHeight} px
                 </p>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Text Prompt Card */}
-          <Card className={!sessionId ? "opacity-50 pointer-events-none" : ""}>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Type className="w-4 h-4" />
-                Text Prompt
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleTextSubmit} className="flex gap-2">
-                <Input
-                  value={textPrompt}
-                  onChange={(e) => setTextPrompt(e.target.value)}
-                  placeholder='e.g. "person", "dog"'
-                  disabled={isLoading}
-                />
-                <Button
-                  type="submit"
-                  disabled={isLoading || !textPrompt.trim()}
-                >
-                  {isLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4" />
-                  )}
-                </Button>
-              </form>
             </CardContent>
           </Card>
 
@@ -610,7 +582,7 @@ export default function Home() {
                 variant="destructive"
                 size="sm"
                 onClick={handleReset}
-                disabled={isLoading}
+                disabled={isLoading || !hasPrompts}
                 className="w-full"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
@@ -717,9 +689,9 @@ export default function Home() {
         </aside>
 
         {/* Main Canvas Area */}
-        <section className="relative">
+        <section className="relative min-w-0">
           {/* Backend status - absolutely positioned above canvas, right aligned */}
-          <div className="absolute -top-8 right-0 flex justify-end mr-4">
+          <div className="absolute -top-8 right-0 flex justify-end mr-4 z-10">
             {backendStatus === "checking" && (
               <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -771,9 +743,9 @@ export default function Home() {
                 </div>
                 <div className="flex items-center gap-2">
                   <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
-                    Enter
+                    Click
                   </kbd>
-                  <span>Submit text prompt</span>
+                  <span>Add point prompt</span>
                 </div>
               </div>
               

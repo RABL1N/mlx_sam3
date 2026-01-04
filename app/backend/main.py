@@ -419,12 +419,31 @@ async def reset_prompts(request: SessionRequest):
     try:
         state = session["state"]
         
+        # Preserve masks, boxes, scores, and category_ids before resetting prompts
+        preserved_masks = state.get("masks")
+        preserved_boxes = state.get("boxes")
+        preserved_scores = state.get("scores")
+        preserved_category_ids = state.get("category_ids")
+        
         start_time = time.perf_counter()
         processor.reset_all_prompts(state)
         processing_time_ms = (time.perf_counter() - start_time) * 1000
         
+        # Restore masks, boxes, scores, and category_ids if they existed
+        if preserved_masks is not None:
+            state["masks"] = preserved_masks
+        if preserved_boxes is not None:
+            state["boxes"] = preserved_boxes
+        if preserved_scores is not None:
+            state["scores"] = preserved_scores
+        if preserved_category_ids is not None:
+            state["category_ids"] = preserved_category_ids
+        
+        # Clear all prompts
         if "prompted_boxes" in state:
             del state["prompted_boxes"]
+        if "prompted_points" in state:
+            state["prompted_points"] = []
         
         return {
             "session_id": request.session_id,
