@@ -17,6 +17,8 @@ import {
   Download,
   MousePointer2,
   MousePointerClick,
+  X,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +32,8 @@ import {
   resetPrompts,
   checkHealth,
   saveAnnotations,
+  removeInstance,
+  updateCategory,
   type SegmentationResult,
   type RLEMask,
 } from "@/lib/api";
@@ -64,6 +68,7 @@ export default function Home() {
   const [pointMode, setPointMode] = useState<PointMode>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedInstanceIndex, setSelectedInstanceIndex] = useState<number | null>(null);
   const [backendStatus, setBackendStatus] = useState<
     "checking" | "online" | "offline"
   >("checking");
@@ -126,6 +131,7 @@ export default function Home() {
         setTextPrompt("");
         setPointMode(null);
         setBoxMode(null);
+        setSelectedInstanceIndex(null);
         addTiming("Image Encoding", response.processing_time_ms);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to upload image");
@@ -175,7 +181,8 @@ export default function Home() {
         const response = await addBoxPrompt(
           sessionId,
           box,
-          boxMode === "positive"
+          boxMode === "positive",
+          selectedInstanceIndex
         );
         setResult(response.results);
         addTiming(`Box (${boxMode})`, response.processing_time_ms);
@@ -187,7 +194,7 @@ export default function Home() {
         setIsLoading(false);
       }
     },
-    [sessionId, boxMode, addTiming]
+    [sessionId, boxMode, selectedInstanceIndex, addTiming]
   );
 
   const handlePointClick = useCallback(
@@ -198,7 +205,12 @@ export default function Home() {
       setIsLoading(true);
 
       try {
-        const response = await addPointPrompt(sessionId, point, label);
+        const response = await addPointPrompt(
+          sessionId, 
+          point, 
+          label,
+          selectedInstanceIndex
+        );
         setResult(response.results);
         addTiming(`Point (${label ? "positive" : "negative"})`, response.processing_time_ms);
       } catch (err) {
@@ -209,7 +221,7 @@ export default function Home() {
         setIsLoading(false);
       }
     },
-    [sessionId, addTiming]
+    [sessionId, selectedInstanceIndex, addTiming]
   );
 
   const handleReset = async () => {
@@ -260,6 +272,59 @@ export default function Home() {
       setIsLoading(false);
     }
   }, [sessionId, result]);
+
+  const handleRemoveInstance = useCallback(
+    async (instanceIndex: number) => {
+      if (!sessionId) return;
+
+      setError(null);
+      setIsLoading(true);
+
+      try {
+        const response = await removeInstance(sessionId, instanceIndex);
+        setResult(response.results);
+        // Clear selection if the selected instance was removed
+        if (selectedInstanceIndex === instanceIndex) {
+          setSelectedInstanceIndex(null);
+        } else if (selectedInstanceIndex !== null && selectedInstanceIndex > instanceIndex) {
+          // Adjust selection index if an instance before it was removed
+          setSelectedInstanceIndex(selectedInstanceIndex - 1);
+        }
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to remove instance"
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [sessionId, selectedInstanceIndex]
+  );
+
+  const handleUpdateCategory = useCallback(
+    async (instanceIndex: number, categoryId: number | null) => {
+      if (!sessionId) return;
+
+      setError(null);
+      setIsLoading(true);
+
+      try {
+        const response = await updateCategory(sessionId, instanceIndex, categoryId);
+        console.log("Category update response:", response);
+        console.log("Updated results:", response.results);
+        console.log("Category IDs:", response.results?.category_ids);
+        setResult(response.results);
+      } catch (err) {
+        console.error("Error updating category:", err);
+        setError(
+          err instanceof Error ? err.message : "Failed to update category"
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [sessionId]
+  );
 
   const maskCount = result?.masks?.length ?? 0;
 
@@ -313,7 +378,7 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6">
+      <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-6">
         {/* Sidebar Controls */}
         <aside className="space-y-4">
           {/* Upload Card */}
@@ -686,6 +751,138 @@ export default function Home() {
             </div>
           )}
         </section>
+
+        {/* Right Sidebar - Instances List */}
+        <aside className="space-y-4">
+          <Card className={!sessionId ? "opacity-50 pointer-events-none" : ""}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Layers className="w-4 h-4" />
+                Segmented Instances
+              </CardTitle>
+              {selectedInstanceIndex !== null && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Instance {selectedInstanceIndex + 1} selected. Add point/box prompts to refine it.
+                </p>
+              )}
+            </CardHeader>
+            <CardContent>
+              {result?.masks && result.masks.length > 0 ? (
+                <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                  {result.masks.map((mask, index) => {
+                    const categoryId = result.category_ids?.[index] ?? null;
+                    const box = result.boxes?.[index];
+                    const color = [
+                      [59, 235, 161], // Emerald
+                      [96, 165, 250], // Blue
+                      [251, 191, 36], // Amber
+                      [248, 113, 113], // Red
+                      [167, 139, 250], // Violet
+                      [52, 211, 153], // Green
+                      [251, 146, 60], // Orange
+                      [147, 197, 253], // Light Blue
+                    ][index % 8];
+                    
+                    // Category name mapping
+                    const categoryNames: Record<number, string> = {
+                      1: "aspergillus",
+                      2: "penicillium",
+                      3: "rhizopus",
+                      4: "mucor",
+                      5: "other_fungus",
+                    };
+                    const categoryName = categoryId ? categoryNames[categoryId] || `Category ${categoryId}` : null;
+                    
+                    const isSelected = selectedInstanceIndex === index;
+                    
+                    return (
+                      <div
+                        key={index}
+                        onClick={() => setSelectedInstanceIndex(isSelected ? null : index)}
+                        className={`flex items-center justify-between p-3 border rounded-lg transition-colors cursor-pointer ${
+                          isSelected
+                            ? "bg-primary/10 border-primary ring-2 ring-primary/20"
+                            : "bg-card border-border hover:bg-accent/50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div
+                            className="w-4 h-4 rounded flex-shrink-0"
+                            style={{
+                              backgroundColor: `rgb(${color[0]}, ${color[1]}, ${color[2]})`,
+                            }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm">
+                              Instance {index + 1}
+                            </div>
+                            {isSelected ? (
+                              <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                                <select
+                                  key={`category-${index}-${categoryId ?? 'null'}`}
+                                  value={categoryId ?? ""}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    const newCategoryId = value === "" ? null : parseInt(value);
+                                    console.log(`Updating category for instance ${index} to ${newCategoryId}`);
+                                    handleUpdateCategory(
+                                      index,
+                                      newCategoryId
+                                    );
+                                  }}
+                                  disabled={isLoading}
+                                  className="w-full text-xs px-2 py-1 bg-card border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary"
+                                >
+                                  <option value="">None</option>
+                                  <option value="1">aspergillus</option>
+                                  <option value="2">penicillium</option>
+                                  <option value="3">rhizopus</option>
+                                  <option value="4">mucor</option>
+                                  <option value="5">other_fungus</option>
+                                </select>
+                              </div>
+                            ) : (
+                              <div className="text-xs text-muted-foreground">
+                                {categoryName ? (
+                                  <span>Class: {categoryName}</span>
+                                ) : (
+                                  <span className="italic">Class: None</span>
+                                )}
+                                {box && (
+                                  <span className="ml-2">
+                                    Box: [{Math.round(box[0])}, {Math.round(box[1])}]
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveInstance(index);
+                          }}
+                          disabled={isLoading}
+                          className="flex-shrink-0 h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No instances segmented yet.
+                  <br />
+                  Use point or box prompts to segment instances.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </aside>
       </div>
 
       {/* Footer */}

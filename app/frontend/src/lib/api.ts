@@ -18,8 +18,10 @@ export interface SegmentationResult {
   original_height: number;
   masks?: RLEMask[];      // RLE-encoded masks
   boxes?: number[][];     // [N, 4] as [x0, y0, x1, y1]
-  scores?: number[];      // [N]
+  scores?: number[];      // [N] (deprecated, kept for backward compatibility)
+  category_ids?: (number | null)[];  // [N] category IDs, can be null
   prompted_boxes?: { box: number[]; label: boolean }[];
+  prompted_points?: { point: number[]; label: boolean }[];
 }
 
 export interface SegmentResponse {
@@ -85,13 +87,19 @@ export async function segmentWithText(
 export async function addBoxPrompt(
   sessionId: string,
   box: number[],
-  label: boolean
+  label: boolean,
+  selectedInstanceIndex?: number | null
 ): Promise<SegmentResponse> {
   return apiFetch<SegmentResponse>(() =>
     fetch(`${API_BASE}/segment/box`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, box, label }),
+      body: JSON.stringify({ 
+        session_id: sessionId, 
+        box, 
+        label,
+        selected_instance_index: selectedInstanceIndex ?? null
+      }),
     })
   );
 }
@@ -99,13 +107,19 @@ export async function addBoxPrompt(
 export async function addPointPrompt(
   sessionId: string,
   point: number[],
-  label: boolean
+  label: boolean,
+  selectedInstanceIndex?: number | null
 ): Promise<SegmentResponse> {
   return apiFetch<SegmentResponse>(() =>
     fetch(`${API_BASE}/segment/point`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, point, label }),
+      body: JSON.stringify({ 
+        session_id: sessionId, 
+        point, 
+        label,
+        selected_instance_index: selectedInstanceIndex ?? null
+      }),
     })
   );
 }
@@ -132,6 +146,37 @@ export async function saveAnnotations(sessionId: string): Promise<SaveAnnotation
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId }),
+    })
+  );
+}
+
+export async function removeInstance(
+  sessionId: string,
+  instanceIndex: number
+): Promise<SegmentResponse> {
+  return apiFetch<SegmentResponse>(() =>
+    fetch(`${API_BASE}/remove-instance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, instance_index: instanceIndex }),
+    })
+  );
+}
+
+export async function updateCategory(
+  sessionId: string,
+  instanceIndex: number,
+  categoryId: number | null
+): Promise<SegmentResponse> {
+  return apiFetch<SegmentResponse>(() =>
+    fetch(`${API_BASE}/update-category`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        session_id: sessionId, 
+        instance_index: instanceIndex,
+        category_id: categoryId
+      }),
     })
   );
 }

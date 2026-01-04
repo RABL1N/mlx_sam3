@@ -133,6 +133,21 @@ export function SegmentationCanvas({
     }
   }, [pointMode, imageUrl]);
 
+  // Sync local points with backend prompted_points when result changes
+  useEffect(() => {
+    if (result?.prompted_points && imageWidth > 0 && imageHeight > 0) {
+      const syncedPoints: Point[] = result.prompted_points.map((pp) => ({
+        x: pp.point[0],
+        y: pp.point[1],
+        label: pp.label,
+      }));
+      setPoints(syncedPoints);
+    } else if (result && (!result.prompted_points || result.prompted_points.length === 0)) {
+      // If no prompted_points in result, clear local points
+      setPoints([]);
+    }
+  }, [result?.prompted_points, imageWidth, imageHeight]);
+
   // Redraw when result changes
   const drawCanvas = useCallback(() => {
     if (!canvasRef.current || !imageRef.current) return;
@@ -156,10 +171,20 @@ export function SegmentationCanvas({
 
     // Draw masks with semi-transparency using RLE decoding + canvas compositing
     if (result?.masks && result.masks.length > 0) {
+      // Category name mapping
+      const categoryNames: Record<number, string> = {
+        1: "aspergillus",
+        2: "penicillium",
+        3: "rhizopus",
+        4: "mucor",
+        5: "other_fungus",
+      };
+      
       for (let i = 0; i < result.masks.length; i++) {
         const mask = result.masks[i];
         const box = result.boxes?.[i];
-        const score = result.scores?.[i] ?? 0;
+        const categoryId = result.category_ids?.[i] ?? null;
+        const categoryName = categoryId ? categoryNames[categoryId] || `Cat ${categoryId}` : null;
         const color = COLORS[i % COLORS.length];
 
         // Decode RLE mask and draw
@@ -197,13 +222,18 @@ export function SegmentationCanvas({
             (y1 - y0) * displayScale
           );
 
-          // Draw score label
-          ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
-          ctx.fillRect(x0 * displayScale, y0 * displayScale - 24, 50, 20);
-          ctx.fillStyle = "#000";
+          // Draw category label (or "None" if no category)
+          // Set font before measuring text to ensure accurate width calculation
           ctx.font = "bold 12px JetBrains Mono, monospace";
+          const labelText = categoryName || "None";
+          const textWidth = ctx.measureText(labelText).width;
+          const labelWidth = Math.max(textWidth + 8, 50);
+          
+          ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+          ctx.fillRect(x0 * displayScale, y0 * displayScale - 24, labelWidth, 20);
+          ctx.fillStyle = "#000";
           ctx.fillText(
-            `${(score * 100).toFixed(0)}%`,
+            labelText,
             x0 * displayScale + 4,
             y0 * displayScale - 8
           );
@@ -253,6 +283,9 @@ export function SegmentationCanvas({
         ctx.setLineDash([]);
       }
     }
+
+    // Draw prompted points from backend (these are synced with local points via useEffect)
+    // The local points state is already being drawn above, so this ensures consistency
 
     // Draw current drawing box
     if (isDrawing && startPoint && currentPoint && boxMode !== null) {

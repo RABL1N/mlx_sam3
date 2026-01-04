@@ -93,6 +93,17 @@ class ConfidenceRequest(BaseModel):
 class SessionRequest(BaseModel):
     session_id: str
 
+class RemoveInstanceRequest(BaseModel):
+    session_id: str
+    instance_index: int
+
+
+class UpdateCategoryRequest(BaseModel):
+    session_id: str
+    instance_index: int
+    category_id: int | None  # None to unassign category
+
+
 
 def mask_to_rle(mask: np.ndarray) -> dict:
     """
@@ -160,10 +171,25 @@ def serialize_state(state: dict) -> dict:
         
         result["masks"] = masks_list
         result["boxes"] = boxes_list
+        # Get category_ids if they exist, otherwise default to None for all
+        category_ids = state.get("category_ids", [None] * len(scores))
+        if len(category_ids) < len(scores):
+            # Pad with None if category_ids is shorter
+            category_ids.extend([None] * (len(scores) - len(category_ids)))
+        
+        category_ids_list = []
+        for i in range(len(scores)):
+            category_id = category_ids[i] if i < len(category_ids) else None
+            category_ids_list.append(category_id)
+        
         result["scores"] = scores_list
+        result["category_ids"] = category_ids_list
     
     if "prompted_boxes" in state:
         result["prompted_boxes"] = state["prompted_boxes"]
+    
+    if "prompted_points" in state:
+        result["prompted_points"] = state["prompted_points"]
     
     return result
 
@@ -481,7 +507,7 @@ async def save_annotations(request: SessionRequest):
                 {
                     "id": idx + 1,
                     "image_id": image_id,
-                    "category_id": None,
+                    "category_id": results.get("category_ids", [None] * len(results["masks"]))[idx] if idx < len(results.get("category_ids", [])) else None,
                     "segmentation": mask_rle,
                     "bbox": box,
                     "area": int(rle_to_mask(mask_rle).sum()),
@@ -546,6 +572,61 @@ def rle_to_mask(rle: dict) -> np.ndarray:
     return mask.reshape((height, width))
 
 
+@app.post("/update-category")
+async def update_category(request: UpdateCategoryRequest):
+    """Update the category_id for a specific instance."""
+    session = sessions.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        state = session["state"]
+        
+        # Check if we have masks
+        if "masks" not in state or state["masks"] is None or len(state["masks"]) == 0:
+            raise HTTPException(status_code=400, detail="No instances available")
+        
+        # Validate index
+        num_instances = len(state["masks"])
+        if request.instance_index < 0 or request.instance_index >= num_instances:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Instance index {request.instance_index} is out of range. Valid range: 0-{num_instances-1}"
+            )
+        
+        # Validate category_id if provided (should be 1-5 for fungus categories)
+        if request.category_id is not None:
+            if request.category_id < 1 or request.category_id > 5:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid category_id {request.category_id}. Valid range: 1-5 or null"
+                )
+        
+        # Initialize category_ids if not present
+        if "category_ids" not in state:
+            state["category_ids"] = [None] * num_instances
+        
+        # Ensure category_ids list is the right length
+        while len(state["category_ids"]) < num_instances:
+            state["category_ids"].append(None)
+        
+        # Update the category_id for the specified instance
+        state["category_ids"][request.instance_index] = request.category_id
+        
+        session["state"] = state
+        
+        return {
+            "session_id": request.session_id,
+            "message": f"Category for instance {request.instance_index} updated to {request.category_id}",
+            "results": serialize_state(state),
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating category: {str(e)}")
+
+
 @app.delete("/session/{session_id}")
 async def delete_session(session_id: str):
     """Delete a session and free memory."""
@@ -558,4 +639,5 @@ async def delete_session(session_id: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
