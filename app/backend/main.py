@@ -15,6 +15,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 from pydantic import BaseModel
+import mlx.core as mx
 
 # Add parent directory to path to import sam3
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -154,9 +155,33 @@ def serialize_state(state: dict) -> dict:
         scores_list = []
         
         for i in range(len(scores)):
-            mask_np = np.array(masks[i])
-            box_np = np.array(boxes[i])
-            score_np = float(np.array(scores[i]))
+            mask_np = to_numpy_array(masks[i])
+            # Handle boxes - they might be MLX arrays or lists
+            # If boxes is an MLX array, convert to numpy first, then index
+            if hasattr(boxes, 'shape') and hasattr(boxes, '__array__'):
+                # It's an MLX or numpy array
+                boxes_np = np.array(boxes)
+                box_np = boxes_np[i]
+            else:
+                # It's a list
+                box_np = to_numpy_array(boxes[i])
+            score_arr = to_numpy_array(scores[i])
+            # Safely convert score to float (handle arrays)
+            try:
+                if score_arr.size == 0:
+                    score_np = 0.0
+                elif score_arr.size == 1:
+                    # Single element array - use item() to get scalar
+                    score_np = float(score_arr.item())
+                else:
+                    # Multiple elements - take first one
+                    score_np = float(score_arr.flat[0])
+            except (AttributeError, ValueError, TypeError):
+                # Fallback: try direct conversion
+                try:
+                    score_np = float(score_arr)
+                except (ValueError, TypeError):
+                    score_np = 0.0
             
             # Convert mask to binary and get the 2D mask (handle [1, H, W] shape)
             mask_binary = (mask_np > 0.5).astype(np.uint8)
@@ -287,11 +312,7 @@ async def add_box_prompt(request: BoxPromptRequest):
     try:
         state = session["state"]
         
-        # Store prompted box for display
-        if "prompted_boxes" not in state:
-            state["prompted_boxes"] = []
-        
-        # Convert from normalized cxcywh to pixel xyxy for display
+        # Convert from normalized cxcywh to pixel xyxy for IoU check
         img_w = state["original_width"]
         img_h = state["original_height"]
         cx, cy, w, h = request.box
@@ -299,6 +320,29 @@ async def add_box_prompt(request: BoxPromptRequest):
         y_min = (cy - h / 2) * img_h
         x_max = (cx + w / 2) * img_w
         y_max = (cy + h / 2) * img_h
+        new_box_xyxy = np.array([x_min, y_min, x_max, y_max])
+        
+        # Check IoU with existing boxes if we have instances
+        if "boxes" in state and state["boxes"] is not None:
+            boxes_array = np.array(state["boxes"])
+            if boxes_array.size > 0:
+                for existing_box in boxes_array:
+                    existing_box_np = to_numpy_array(existing_box)
+                    iou = calculate_box_iou(new_box_xyxy, existing_box_np)
+                    # Ensure iou is a scalar float
+                    iou_val = float(iou) if not isinstance(iou, (int, float)) else float(iou)
+                    if iou_val > 0.3:
+                        # Silently reject - don't create instance and don't add prompted box
+                        return {
+                            "session_id": request.session_id,
+                            "box_type": "positive" if request.label else "negative",
+                            "results": serialize_state(state),
+                            "processing_time_ms": 0.0
+                        }
+        
+        # Store prompted box for display (only if we pass the IoU check)
+        if "prompted_boxes" not in state:
+            state["prompted_boxes"] = []
         
         state["prompted_boxes"].append({
             "box": [x_min, y_min, x_max, y_max],
@@ -308,6 +352,45 @@ async def add_box_prompt(request: BoxPromptRequest):
         start_time = time.perf_counter()
         state = processor.add_geometric_prompt(request.box, request.label, state)
         processing_time_ms = (time.perf_counter() - start_time) * 1000
+        
+        # Remove mask overlap (earlier masks take priority)
+        if "masks" in state and state["masks"] is not None and len(state["masks"]) > 0:
+            state["masks"] = remove_mask_overlap(state["masks"], state.get("boxes", []))
+        
+        # Recalculate tight bounding boxes after segmentation
+        if "masks" in state and state["masks"] is not None and len(state["masks"]) > 0:
+            if "boxes" not in state:
+                state["boxes"] = []
+            if "category_ids" not in state:
+                state["category_ids"] = []
+            
+            # Get number of masks (handle both MLX arrays and lists)
+            num_masks = state["masks"].shape[0] if hasattr(state["masks"], 'shape') else len(state["masks"])
+            
+            # Ensure category_ids list is long enough
+            while len(state["category_ids"]) < num_masks:
+                state["category_ids"].append(None)
+            
+            # Recalculate tight bboxes for all masks
+            # Keep boxes as MLX arrays for the processor
+            new_boxes = []
+            # Convert masks to numpy for processing
+            masks_np = np.array(state["masks"])
+            # Handle 4D format [N, 1, H, W] - squeeze channel dimension if present
+            if masks_np.ndim == 4 and masks_np.shape[1] == 1:
+                masks_np = masks_np[:, 0, :, :]  # Remove channel dimension: [N, H, W]
+            for i in range(num_masks):
+                mask = masks_np[i]
+                tight_bbox = calculate_tight_bbox_from_mask(mask)
+                # Convert numpy array to list for MLX
+                new_boxes.append(tight_bbox.tolist())
+            
+            # Convert to MLX array if we have boxes, otherwise use empty array
+            if new_boxes:
+                state["boxes"] = mx.array(new_boxes)
+            else:
+                state["boxes"] = mx.zeros((0, 4))
+        
         session["state"] = state
         
         return {
@@ -317,6 +400,8 @@ async def add_box_prompt(request: BoxPromptRequest):
             "processing_time_ms": round(processing_time_ms, 2)
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding box prompt: {str(e)}")
 
@@ -385,9 +470,110 @@ async def add_point_prompt(request: PointPromptRequest):
     try:
         state = session["state"]
         
+        # Check if point is on an existing mask BEFORE processing
+        # If it is, silently reject (existing mask takes priority)
+        if "masks" in state and state["masks"] is not None:
+            masks_array = np.array(state["masks"])
+            if masks_array.size > 0:
+                # Handle 4D format [N, 1, H, W]
+                if masks_array.ndim == 4 and masks_array.shape[1] == 1:
+                    masks_array = masks_array[:, 0, :, :]  # [N, H, W]
+                
+                img_w = state["original_width"]
+                img_h = state["original_height"]
+                
+                # Check if point is on any existing mask
+                for i in range(masks_array.shape[0]):
+                    mask = masks_array[i]
+                    if check_point_on_mask(request.point, mask, img_w, img_h):
+                        # Point is on existing mask - silently reject
+                        return {
+                            "session_id": request.session_id,
+                            "point_type": "positive" if request.label else "negative",
+                            "results": serialize_state(state),
+                            "processing_time_ms": 0.0
+                        }
+        
         start_time = time.perf_counter()
         state = processor.add_point_prompt(request.point, request.label, state)
         processing_time_ms = (time.perf_counter() - start_time) * 1000
+        
+        # Store prompted point for display (only if we get here, meaning it wasn't rejected)
+        if "prompted_points" not in state:
+            state["prompted_points"] = []
+        state["prompted_points"].append({
+            "point": request.point,
+            "label": request.label
+        })
+        
+        # Remove mask overlap (earlier masks take priority)
+        if "masks" in state and state["masks"] is not None and len(state["masks"]) > 0:
+            state["masks"] = remove_mask_overlap(state["masks"], state.get("boxes", []))
+        
+        # Recalculate tight bounding boxes after segmentation
+        if "masks" in state and state["masks"] is not None and len(state["masks"]) > 0:
+            if "boxes" not in state:
+                state["boxes"] = []
+            if "category_ids" not in state:
+                state["category_ids"] = []
+            
+            # Get number of masks (handle both MLX arrays and lists)
+            num_masks = state["masks"].shape[0] if hasattr(state["masks"], 'shape') else len(state["masks"])
+            
+            # Ensure category_ids list is long enough
+            while len(state["category_ids"]) < num_masks:
+                state["category_ids"].append(None)
+            
+            # Recalculate tight bboxes for all masks
+            # Keep boxes as MLX arrays for the processor
+            new_boxes = []
+            # Convert masks to numpy for processing
+            masks_np = np.array(state["masks"])
+            # Handle 4D format [N, 1, H, W] - squeeze channel dimension if present
+            if masks_np.ndim == 4 and masks_np.shape[1] == 1:
+                masks_np = masks_np[:, 0, :, :]  # Remove channel dimension: [N, H, W]
+            for i in range(num_masks):
+                mask = masks_np[i]
+                tight_bbox = calculate_tight_bbox_from_mask(mask)
+                # Convert numpy array to list for MLX
+                new_boxes.append(tight_bbox.tolist())
+            
+            # Convert to MLX array if we have boxes, otherwise use empty array
+            if new_boxes:
+                state["boxes"] = mx.array(new_boxes)
+            else:
+                state["boxes"] = mx.zeros((0, 4))
+            
+            # Check IoU with existing boxes (excluding the newly created one)
+            if state["boxes"].shape[0] > 1:
+                # Convert to numpy for IoU calculation
+                boxes_np = np.array(state["boxes"])
+                new_box = boxes_np[-1]
+                for i in range(boxes_np.shape[0] - 1):
+                    existing_box = boxes_np[i]
+                    iou = calculate_box_iou(new_box, existing_box)
+                    # Ensure iou is a scalar float
+                    iou_val = float(iou) if not isinstance(iou, (int, float)) else float(iou)
+                    if iou_val > 0.3:
+                        # Remove the new instance if it overlaps too much
+                        state["masks"] = state["masks"][:-1]
+                        # Remove last box from MLX array
+                        state["boxes"] = state["boxes"][:-1]
+                        if state["category_ids"]:
+                            state["category_ids"] = state["category_ids"][:-1]
+                        if "scores" in state and state["scores"]:
+                            state["scores"] = state["scores"][:-1]
+                        # Remove the point from prompted_points since we're rejecting it
+                        if "prompted_points" in state and state["prompted_points"]:
+                            state["prompted_points"] = state["prompted_points"][:-1]
+                        session["state"] = state
+                        return {
+                            "session_id": request.session_id,
+                            "point_type": "positive" if request.label else "negative",
+                            "results": serialize_state(state),
+                            "processing_time_ms": processing_time_ms
+                        }
+        
         session["state"] = state
         
         return {
@@ -397,7 +583,13 @@ async def add_point_prompt(request: PointPromptRequest):
             "processing_time_ms": round(processing_time_ms, 2)
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error in add_point_prompt: {str(e)}")
+        print(f"Traceback: {error_trace}")
         raise HTTPException(status_code=500, detail=f"Error adding point prompt: {str(e)}")
 
 
@@ -547,6 +739,31 @@ async def save_annotations(request: SessionRequest):
         raise HTTPException(status_code=500, detail=f"Error saving annotations: {str(e)}")
 
 
+def to_numpy_array(arr):
+    """Safely convert MLX arrays or other types to numpy arrays."""
+    try:
+        # Check if it's an MLX array (has __array__ or specific MLX attributes)
+        if hasattr(arr, '__array__'):
+            # Use __array__ if available (works for both numpy and MLX)
+            return np.asarray(arr)
+        elif hasattr(arr, 'tolist'):
+            # MLX arrays have tolist() method
+            result = np.array(arr.tolist())
+            return result
+        else:
+            # Already numpy or can be converted directly
+            return np.asarray(arr)
+    except (AttributeError, TypeError, ValueError) as e:
+        # Fallback: try direct conversion
+        try:
+            return np.asarray(arr)
+        except:
+            # Last resort: try tolist if available
+            if hasattr(arr, 'tolist'):
+                return np.array(arr.tolist())
+            raise ValueError(f"Could not convert {type(arr)} to numpy array: {e}")
+
+
 def rle_to_mask(rle: dict) -> np.ndarray:
     """Convert RLE dict to binary mask numpy array."""
     height, width = rle["size"]
@@ -570,6 +787,237 @@ def rle_to_mask(rle: dict) -> np.ndarray:
         is_foreground = not is_foreground
     
     return mask.reshape((height, width))
+
+
+def check_point_on_mask(point: list[float], mask: np.ndarray, img_w: int, img_h: int) -> bool:
+    """
+    Check if a normalized point [x, y] in [0, 1] is on a mask.
+    
+    Args:
+        point: [x, y] normalized coordinates in [0, 1]
+        mask: 2D or 3D mask array
+        img_w: Original image width
+        img_h: Original image height
+        
+    Returns:
+        True if point is on the mask, False otherwise
+    """
+    # Convert normalized point to pixel coordinates
+    px = int(point[0] * img_w)
+    py = int(point[1] * img_h)
+    
+    # Ensure mask is 2D
+    mask_2d = mask
+    if mask.ndim > 2:
+        mask_2d = mask.squeeze()
+        if mask_2d.ndim > 2:
+            mask_2d = mask_2d[0]
+    
+    # Check bounds
+    if px < 0 or px >= mask_2d.shape[1] or py < 0 or py >= mask_2d.shape[0]:
+        return False
+    
+    # Check if point is on mask (value > 0.5)
+    return mask_2d[py, px] > 0.5
+
+
+def calculate_box_iou(box1: np.ndarray, box2: np.ndarray) -> float:
+    """
+    Calculate Intersection over Union (IoU) between two bounding boxes.
+    
+    Args:
+        box1: [x0, y0, x1, y1] format
+        box2: [x0, y0, x1, y1] format
+        
+    Returns:
+        IoU value between 0 and 1
+    """
+    # Ensure boxes are numpy arrays and extract scalar values
+    box1 = to_numpy_array(box1)
+    box2 = to_numpy_array(box2)
+    
+    # Extract scalar coordinates safely
+    def get_scalar(arr, idx):
+        val = arr[idx] if hasattr(arr, '__getitem__') else arr
+        if isinstance(val, np.ndarray):
+            return float(val.item() if val.size == 1 else val.flat[0])
+        return float(val)
+    
+    x0_1 = get_scalar(box1, 0)
+    y0_1 = get_scalar(box1, 1)
+    x1_1 = get_scalar(box1, 2)
+    y1_1 = get_scalar(box1, 3)
+    
+    x0_2 = get_scalar(box2, 0)
+    y0_2 = get_scalar(box2, 1)
+    x1_2 = get_scalar(box2, 2)
+    y1_2 = get_scalar(box2, 3)
+    
+    # Calculate intersection
+    x0_int = max(x0_1, x0_2)
+    y0_int = max(y0_1, y0_2)
+    x1_int = min(x1_1, x1_2)
+    y1_int = min(y1_1, y1_2)
+    
+    if x1_int <= x0_int or y1_int <= y0_int:
+        return 0.0
+    
+    intersection = (x1_int - x0_int) * (y1_int - y0_int)
+    
+    # Calculate union
+    area1 = (x1_1 - x0_1) * (y1_1 - y0_1)
+    area2 = (x1_2 - x0_2) * (y1_2 - y0_2)
+    union = area1 + area2 - intersection
+    
+    if union <= 0:
+        return 0.0
+    
+    return float(intersection / union)
+
+
+def calculate_tight_bbox_from_mask(mask: np.ndarray) -> np.ndarray:
+    """
+    Calculate a tight bounding box that perfectly fits the mask.
+    
+    Args:
+        mask: 2D binary numpy array (H, W) with values 0 or 1
+        
+    Returns:
+        [x0, y0, x1, y1] bounding box in pixel coordinates
+    """
+    # Convert to numpy array if it's not already
+    mask = to_numpy_array(mask)
+    
+    # Ensure mask is 2D
+    if mask.ndim > 2:
+        mask = mask.squeeze()
+        if mask.ndim > 2:
+            # Take first channel if still 3D
+            mask = mask[0]
+    
+    # Convert to binary if needed
+    mask_binary = (mask > 0.5).astype(np.uint8)
+    
+    # Find rows and columns with at least one foreground pixel
+    rows = np.any(mask_binary, axis=1)
+    cols = np.any(mask_binary, axis=0)
+    
+    if not np.any(rows) or not np.any(cols):
+        # Empty mask, return zero box
+        return np.array([0.0, 0.0, 0.0, 0.0])
+    
+    # Get bounding box coordinates
+    row_indices = np.where(rows)[0]
+    col_indices = np.where(cols)[0]
+    
+    # Handle case where there's only one row or column
+    # Ensure we extract scalar values, not arrays
+    if len(row_indices) == 1:
+        y0 = y1 = int(np.asarray(row_indices[0]).item())
+    else:
+        y0 = int(np.asarray(row_indices[0]).item())
+        y1 = int(np.asarray(row_indices[-1]).item())
+    
+    if len(col_indices) == 1:
+        x0 = x1 = int(np.asarray(col_indices[0]).item())
+    else:
+        x0 = int(np.asarray(col_indices[0]).item())
+        x1 = int(np.asarray(col_indices[-1]).item())
+    
+    # Return [x0, y0, x1, y1]
+    return np.array([float(x0), float(y0), float(x1 + 1), float(y1 + 1)])
+
+
+def remove_mask_overlap(masks: list, boxes: list) -> list:
+    """
+    Remove mask overlap by mapping overlapping pixels to the mask that was there first.
+    
+    Args:
+        masks: List of 2D numpy arrays (masks)
+        boxes: List of [x0, y0, x1, y1] bounding boxes
+        
+    Returns:
+        List of masks with overlaps removed (earlier masks take priority)
+    """
+    # Safely check if masks is empty (handle arrays)
+    try:
+        if masks is None or len(masks) == 0:
+            return masks
+    except (TypeError, ValueError):
+        # If masks is an array, convert it
+        if hasattr(masks, '__len__'):
+            if len(masks) == 0:
+                return masks
+        return masks
+    
+    # Convert masks to numpy for processing (handle MLX arrays)
+    masks_np = np.array(masks)
+    
+    # Handle 4D format [N, 1, H, W] - squeeze channel dimension if present
+    if masks_np.ndim == 4 and masks_np.shape[1] == 1:
+        masks_np = masks_np[:, 0, :, :]  # Remove channel dimension: [N, H, W]
+    
+    # Convert first mask to numpy and get dimensions safely
+    first_mask = masks_np[0]
+    if first_mask.ndim > 2:
+        first_mask = first_mask.squeeze()
+        if first_mask.ndim > 2:
+            first_mask = first_mask[0]
+    
+    # Get image dimensions - ensure we have integers
+    shape = first_mask.shape
+    # Safely extract shape dimensions as integers
+    try:
+        h = int(shape[0]) if len(shape) >= 1 else 1
+        w = int(shape[1]) if len(shape) >= 2 else 1
+    except (TypeError, ValueError):
+        # If shape elements are arrays, convert them properly
+        h = int(np.asarray(shape[0]).item()) if len(shape) >= 1 else 1
+        w = int(np.asarray(shape[1]).item()) if len(shape) >= 2 else 1
+    
+    # Create a combined mask with instance IDs
+    instance_mask = np.zeros((h, w), dtype=np.int32) - 1  # -1 means no instance
+    
+    # Process masks in order (earlier masks take priority)
+    result_masks = []
+    num_masks = masks_np.shape[0] if hasattr(masks_np, 'shape') else len(masks_np)
+    for i in range(num_masks):
+        mask = masks_np[i]
+        # Ensure mask is 2D and binary
+        mask_np = to_numpy_array(mask)
+        if mask_np.ndim > 2:
+            mask_np = mask_np.squeeze()
+            if mask_np.ndim > 2:
+                mask_np = mask_np[0]
+        
+        mask_binary = (mask_np > 0.5).astype(np.uint8)
+        
+        # Resize if needed to match image dimensions
+        if mask_binary.shape != (h, w):
+            from PIL import Image
+            mask_pil = Image.fromarray((mask_binary * 255).astype(np.uint8), mode="L")
+            mask_pil = mask_pil.resize((w, h), Image.BILINEAR)
+            mask_binary = (np.array(mask_pil) / 255.0 > 0.5).astype(np.uint8)
+        
+        # Only keep pixels that aren't already assigned to an earlier instance
+        new_mask = mask_binary.copy()
+        new_mask[instance_mask >= 0] = 0  # Remove overlap with earlier masks
+        
+        # Update instance mask
+        instance_mask[new_mask > 0] = i
+        
+        result_masks.append(new_mask.astype(np.float32))
+    
+    # Convert result masks back to MLX arrays for the processor
+    # Processor expects masks in format [N, 1, H, W] (4D) to match new_masks format
+    if result_masks:
+        # Stack masks into a single array: [N, H, W]
+        masks_array = np.stack(result_masks, axis=0)
+        # Add channel dimension to match processor format: [N, 1, H, W]
+        masks_array = masks_array[:, None, :, :]
+        return mx.array(masks_array)
+    else:
+        return mx.zeros((0, 1, h, w))
 
 
 @app.post("/update-category")
@@ -625,6 +1073,54 @@ async def update_category(request: UpdateCategoryRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error updating category: {str(e)}")
+
+
+@app.post("/remove-instance")
+async def remove_instance(request: RemoveInstanceRequest):
+    """Remove a specific instance from the segmentation results."""
+    session = sessions.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    try:
+        state = session["state"]
+        
+        # Check if we have masks
+        if "masks" not in state or state["masks"] is None or len(state["masks"]) == 0:
+            raise HTTPException(status_code=400, detail="No instances available")
+        
+        # Validate index
+        num_instances = len(state["masks"])
+        if request.instance_index < 0 or request.instance_index >= num_instances:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Instance index {request.instance_index} is out of range. Valid range: 0-{num_instances-1}"
+            )
+        
+        # Remove the instance at the specified index
+        state["masks"] = [mask for i, mask in enumerate(state["masks"]) if i != request.instance_index]
+        
+        if "boxes" in state and state["boxes"] is not None:
+            state["boxes"] = [box for i, box in enumerate(state["boxes"]) if i != request.instance_index]
+        
+        if "scores" in state and state["scores"] is not None:
+            state["scores"] = [score for i, score in enumerate(state["scores"]) if i != request.instance_index]
+        
+        if "category_ids" in state and state["category_ids"] is not None:
+            state["category_ids"] = [cat_id for i, cat_id in enumerate(state["category_ids"]) if i != request.instance_index]
+        
+        session["state"] = state
+        
+        return {
+            "session_id": request.session_id,
+            "message": f"Instance {request.instance_index} removed",
+            "results": serialize_state(state),
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error removing instance: {str(e)}")
 
 
 @app.delete("/session/{session_id}")
