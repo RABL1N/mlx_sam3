@@ -189,13 +189,6 @@ export function SegmentationCanvas({
     img.src = imageUrl;
   }, [imageUrl]);
 
-  // Clear points when point mode is disabled or image changes
-  useEffect(() => {
-    if (pointMode === null) {
-      setPoints([]);
-    }
-  }, [pointMode, imageUrl]);
-
   // Sync local points with backend prompted_points when result changes
   // Backend sends normalized coordinates [0, 1], convert to pixel coordinates
   useEffect(() => {

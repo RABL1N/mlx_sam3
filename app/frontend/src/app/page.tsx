@@ -360,40 +360,22 @@ export default function Home() {
   return (
     <main className="min-h-screen p-6 md:p-8">
       {/* Header */}
-      <header className="max-w-7xl mx-auto mb-8">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <header className="max-w-[1600px] mx-auto mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-6">
+          <div className="flex items-center gap-5">
             <div className="p-2 bg-primary/20 rounded-lg pulse-glow">
               <Sparkles className="w-6 h-6 text-primary" />
             </div>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">SAM3 Studio</h1>
               <p className="text-sm text-muted-foreground">
-                Interactive segmentation with text & box prompts
+                Interactive segmentation with<br />
+                text & box prompts
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            {/* Backend status */}
-            {backendStatus === "checking" && (
-              <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Connecting...</span>
-              </div>
-            )}
-            {backendStatus === "online" && (
-              <div className="flex items-center gap-2 text-primary text-sm">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Model Ready</span>
-              </div>
-            )}
-            {backendStatus === "offline" && (
-              <div className="flex items-center gap-2 text-destructive text-sm">
-                <XCircle className="w-4 h-4" />
-                <span>Backend Offline</span>
-              </div>
-            )}
-          </div>
+          <div></div>
+          <div></div>
         </div>
       </header>
 
@@ -735,7 +717,28 @@ export default function Home() {
         </aside>
 
         {/* Main Canvas Area */}
-        <section>
+        <section className="relative">
+          {/* Backend status - absolutely positioned above canvas, right aligned */}
+          <div className="absolute -top-8 right-0 flex justify-end mr-4">
+            {backendStatus === "checking" && (
+              <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Connecting...</span>
+              </div>
+            )}
+            {backendStatus === "online" && (
+              <div className="flex items-center gap-2 text-primary text-sm mb-2">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Model Ready</span>
+              </div>
+            )}
+            {backendStatus === "offline" && (
+              <div className="flex items-center gap-2 text-destructive text-sm mb-2">
+                <XCircle className="w-4 h-4" />
+                <span>Backend Offline</span>
+              </div>
+            )}
+          </div>
           <Card className="overflow-hidden">
             <CardContent className="p-4">
               <SegmentationCanvas
@@ -818,7 +821,7 @@ export default function Home() {
               </CardTitle>
               {selectedInstanceIndex !== null && (
                 <p className="text-xs text-muted-foreground mt-2">
-                  Instance {selectedInstanceIndex + 1} selected. Add point/box prompts to refine it.
+                  Instance {selectedInstanceIndex + 1} selected.
                 </p>
               )}
             </CardHeader>
@@ -903,12 +906,7 @@ export default function Home() {
                                 {categoryName ? (
                                   <span>Class: {categoryName}</span>
                                 ) : (
-                                  <span className="italic">Class: None</span>
-                                )}
-                                {box && (
-                                  <span className="ml-2">
-                                    Box: [{Math.round(box[0])}, {Math.round(box[1])}]
-                                  </span>
+                                  <span>Class: None</span>
                                 )}
                               </div>
                             )}
