@@ -20,6 +20,7 @@ interface Props {
   onPointClicked?: (point: number[], label: boolean) => void; // [x, y] normalized
   onInstanceClick?: (index: number) => void; // Called when an instance is clicked
   isLoading: boolean;
+  showMasksAndPrompts?: boolean; // Whether to show masks and prompts (default: true)
 }
 
 // Color palette for masks
@@ -135,6 +136,7 @@ export function SegmentationCanvas({
   onPointClicked,
   onInstanceClick,
   isLoading,
+  showMasksAndPrompts = true,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -228,7 +230,7 @@ export function SegmentationCanvas({
     ctx.drawImage(imageRef.current, 0, 0, displayWidth, displayHeight);
 
     // Draw masks with semi-transparency using RLE decoding + canvas compositing
-    if (result?.masks && result.masks.length > 0) {
+    if (showMasksAndPrompts && result?.masks && result.masks.length > 0) {
       // Category name mapping
       const categoryNames: Record<number, string> = {
         1: "aspergillus",
@@ -321,34 +323,36 @@ export function SegmentationCanvas({
       }
     }
 
-    // Draw points (positive = green, negative = red)
-    points.forEach((point) => {
-      const x = point.x * displayScale;
-      const y = point.y * displayScale;
-      const radius = 8;
-      
-      // Draw outer circle
-      ctx.fillStyle = point.label ? "rgba(34, 197, 94, 0.3)" : "rgba(239, 68, 68, 0.3)";
-      ctx.beginPath();
-      ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Draw inner circle
-      ctx.fillStyle = point.label ? "#22c55e" : "#ef4444";
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Draw border
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.stroke();
-    });
+    // Draw points (positive = green, negative = red) - only if masks are visible
+    if (showMasksAndPrompts) {
+      points.forEach((point) => {
+        const x = point.x * displayScale;
+        const y = point.y * displayScale;
+        const radius = 8;
+        
+        // Draw outer circle
+        ctx.fillStyle = point.label ? "rgba(34, 197, 94, 0.3)" : "rgba(239, 68, 68, 0.3)";
+        ctx.beginPath();
+        ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw inner circle
+        ctx.fillStyle = point.label ? "#22c55e" : "#ef4444";
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw border
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+    }
 
-    // Draw prompted boxes
-    if (result?.prompted_boxes) {
+    // Draw prompted boxes - only if masks are visible
+    if (showMasksAndPrompts && result?.prompted_boxes) {
       for (const promptedBox of result.prompted_boxes) {
         const [x0, y0, x1, y1] = promptedBox.box;
         ctx.strokeStyle = promptedBox.label ? "#3beba1" : "#f87171";
@@ -391,6 +395,7 @@ export function SegmentationCanvas({
     boxMode,
     points,
     hoveredInstanceIndex,
+    showMasksAndPrompts,
   ]);
 
   useEffect(() => {

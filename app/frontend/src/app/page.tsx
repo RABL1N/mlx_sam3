@@ -19,6 +19,8 @@ import {
   MousePointerClick,
   X,
   Layers,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,6 +71,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedInstanceIndex, setSelectedInstanceIndex] = useState<number | null>(null);
+  const [showMasksAndPrompts, setShowMasksAndPrompts] = useState(true); // Default: visible
   const [backendStatus, setBackendStatus] = useState<
     "checking" | "online" | "offline"
   >("checking");
@@ -746,24 +749,59 @@ export default function Home() {
                 onPointClicked={handlePointClick}
                 onInstanceClick={(index) => setSelectedInstanceIndex(index)}
                 isLoading={isLoading}
+                showMasksAndPrompts={showMasksAndPrompts}
               />
             </CardContent>
           </Card>
 
-          {/* Keyboard Shortcuts */}
+          {/* Keyboard Shortcuts and Toggle */}
           {sessionId && (
-            <div className="mt-4 flex flex-wrap gap-4 text-xs text-muted-foreground animate-fade-in-up">
-              <div className="flex items-center gap-2">
-                <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
-                  Click + Drag
-                </kbd>
-                <span>Draw box</span>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-4 text-xs text-muted-foreground animate-fade-in-up">
+              {/* Keyboard Shortcuts */}
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
+                    Click + Drag
+                  </kbd>
+                  <span>Draw box</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
+                    Enter
+                  </kbd>
+                  <span>Submit text prompt</span>
+                </div>
               </div>
+              
+              {/* Toggle button on the right */}
               <div className="flex items-center gap-2">
-                <kbd className="px-2 py-1 bg-card rounded border border-border font-mono">
-                  Enter
-                </kbd>
-                <span>Submit text prompt</span>
+                <label
+                  htmlFor="toggle-masks"
+                  className="flex cursor-pointer items-center gap-2"
+                >
+                  {showMasksAndPrompts ? (
+                    <Eye className="w-4 h-4" />
+                  ) : (
+                    <EyeOff className="w-4 h-4" />
+                  )}
+                  <span>Masks & Prompts</span>
+                </label>
+                <button
+                  id="toggle-masks"
+                  onClick={() => setShowMasksAndPrompts(!showMasksAndPrompts)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+                    showMasksAndPrompts ? "bg-primary" : "bg-muted"
+                  }`}
+                  role="switch"
+                  aria-checked={showMasksAndPrompts}
+                  aria-label="Toggle masks and prompts visibility"
+                >
+                  <span
+                    className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform ${
+                      showMasksAndPrompts ? "translate-x-5" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
               </div>
             </div>
           )}
