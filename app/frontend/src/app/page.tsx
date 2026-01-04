@@ -750,6 +750,7 @@ export default function Home() {
                 onInstanceClick={(index) => setSelectedInstanceIndex(index)}
                 isLoading={isLoading}
                 showMasksAndPrompts={showMasksAndPrompts}
+                selectedInstanceIndex={selectedInstanceIndex}
               />
             </CardContent>
           </Card>

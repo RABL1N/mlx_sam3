@@ -21,6 +21,7 @@ interface Props {
   onInstanceClick?: (index: number) => void; // Called when an instance is clicked
   isLoading: boolean;
   showMasksAndPrompts?: boolean; // Whether to show masks and prompts (default: true)
+  selectedInstanceIndex?: number | null; // Currently selected instance index from sidebar
 }
 
 // Color palette for masks
@@ -137,6 +138,7 @@ export function SegmentationCanvas({
   onInstanceClick,
   isLoading,
   showMasksAndPrompts = true,
+  selectedInstanceIndex = null,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -153,6 +155,8 @@ export function SegmentationCanvas({
   const [displayScale, setDisplayScale] = useState(1);
   const [points, setPoints] = useState<Point[]>([]);
   const [hoveredInstanceIndex, setHoveredInstanceIndex] = useState<number | null>(null);
+  const [pulsingInstanceIndex, setPulsingInstanceIndex] = useState<number | null>(null);
+  const [pulseStartTime, setPulseStartTime] = useState<number | null>(null);
 
   // Calculate display scale to fit image in container
   useEffect(() => {
@@ -247,6 +251,7 @@ export function SegmentationCanvas({
         const categoryName = categoryId ? categoryNames[categoryId] || `Cat ${categoryId}` : null;
         const color = COLORS[i % COLORS.length];
         const isHovered = hoveredInstanceIndex === i;
+        const isPulsing = pulsingInstanceIndex === i;
 
         // Decode RLE mask and draw
         if (mask && mask.counts && mask.size) {
@@ -266,8 +271,8 @@ export function SegmentationCanvas({
           offCtx.putImageData(maskImageData, 0, 0);
 
           // Composite onto main canvas with transparency (GPU-accelerated scaling & blending)
-          // Add pulse animation when hovered
-          if (isHovered) {
+          // Add pulse animation when hovered or selected
+          if (isHovered || isPulsing) {
             // Pulse effect: oscillate opacity between 0.5 and 0.7 (subtle)
             const time = Date.now() / 1000; // Current time in seconds
             const pulseSpeed = 0.8; // Speed of pulse (cycles per second) - slower for subtlety
@@ -395,6 +400,8 @@ export function SegmentationCanvas({
     boxMode,
     points,
     hoveredInstanceIndex,
+    pulsingInstanceIndex,
+    pulseStartTime,
     showMasksAndPrompts,
   ]);
 
@@ -419,6 +426,46 @@ export function SegmentationCanvas({
       }
     };
   }, [hoveredInstanceIndex, drawCanvas]);
+
+  // Trigger pulse animation when instance is selected in sidebar
+  useEffect(() => {
+    if (selectedInstanceIndex !== null && selectedInstanceIndex !== undefined) {
+      setPulsingInstanceIndex(selectedInstanceIndex);
+      setPulseStartTime(Date.now());
+    } else {
+      setPulsingInstanceIndex(null);
+      setPulseStartTime(null);
+    }
+  }, [selectedInstanceIndex]);
+
+  // Animation loop for selection pulse (one cycle)
+  useEffect(() => {
+    if (pulsingInstanceIndex === null || pulseStartTime === null) return;
+    
+    const pulseSpeed = 0.8; // Same speed as hover pulse
+    const pulseDuration = 1000 / pulseSpeed; // Duration for one cycle (in ms)
+    
+    let animationFrameId: number;
+    const animate = () => {
+      const elapsed = Date.now() - pulseStartTime;
+      if (elapsed >= pulseDuration) {
+        // One cycle complete, stop animation
+        setPulsingInstanceIndex(null);
+        setPulseStartTime(null);
+        drawCanvas(); // Final draw without pulse
+        return;
+      }
+      drawCanvas();
+      animationFrameId = requestAnimationFrame(animate);
+    };
+    animate();
+    
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [pulsingInstanceIndex, pulseStartTime, drawCanvas]);
 
   const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
