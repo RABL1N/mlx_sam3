@@ -134,11 +134,12 @@ export function SegmentationCanvas({
   }, [pointMode, imageUrl]);
 
   // Sync local points with backend prompted_points when result changes
+  // Backend sends normalized coordinates [0, 1], convert to pixel coordinates
   useEffect(() => {
     if (result?.prompted_points && imageWidth > 0 && imageHeight > 0) {
       const syncedPoints: Point[] = result.prompted_points.map((pp) => ({
-        x: pp.point[0],
-        y: pp.point[1],
+        x: pp.point[0] * imageWidth,  // Convert normalized x [0,1] to pixel x
+        y: pp.point[1] * imageHeight, // Convert normalized y [0,1] to pixel y
         label: pp.label,
       }));
       setPoints(syncedPoints);

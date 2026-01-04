@@ -1098,16 +1098,58 @@ async def remove_instance(request: RemoveInstanceRequest):
             )
         
         # Remove the instance at the specified index
-        state["masks"] = [mask for i, mask in enumerate(state["masks"]) if i != request.instance_index]
+        # Handle MLX arrays for masks and boxes
+        if hasattr(state["masks"], 'shape'):
+            # MLX array - convert to numpy, remove index, convert back to MLX
+            masks_np = np.array(state["masks"])
+            indices = [i for i in range(masks_np.shape[0]) if i != request.instance_index]
+            if indices:
+                state["masks"] = mx.array(masks_np[indices])
+            else:
+                # No masks left - get dimensions from first mask
+                h, w = masks_np.shape[2], masks_np.shape[3]
+                state["masks"] = mx.zeros((0, 1, h, w))
+        else:
+            state["masks"] = [mask for i, mask in enumerate(state["masks"]) if i != request.instance_index]
         
         if "boxes" in state and state["boxes"] is not None:
-            state["boxes"] = [box for i, box in enumerate(state["boxes"]) if i != request.instance_index]
+            if hasattr(state["boxes"], 'shape'):
+                # MLX array - convert to numpy, remove index, convert back to MLX
+                boxes_np = np.array(state["boxes"])
+                indices = [i for i in range(boxes_np.shape[0]) if i != request.instance_index]
+                if indices:
+                    state["boxes"] = mx.array(boxes_np[indices])
+                else:
+                    state["boxes"] = mx.zeros((0, 4))
+            else:
+                state["boxes"] = [box for i, box in enumerate(state["boxes"]) if i != request.instance_index]
         
         if "scores" in state and state["scores"] is not None:
-            state["scores"] = [score for i, score in enumerate(state["scores"]) if i != request.instance_index]
+            if hasattr(state["scores"], 'shape'):
+                scores_np = np.array(state["scores"])
+                indices = [i for i in range(scores_np.shape[0]) if i != request.instance_index]
+                if indices:
+                    state["scores"] = mx.array(scores_np[indices])
+                else:
+                    state["scores"] = mx.zeros((0,))
+            else:
+                state["scores"] = [score for i, score in enumerate(state["scores"]) if i != request.instance_index]
         
         if "category_ids" in state and state["category_ids"] is not None:
             state["category_ids"] = [cat_id for i, cat_id in enumerate(state["category_ids"]) if i != request.instance_index]
+        
+        # Remove the corresponding prompt (box or point) that created this instance
+        # We assume prompts are in the same order as instances (instance i was created by prompt i)
+        # When removing instance at index i, remove prompt at index i
+        if "prompted_boxes" in state and state["prompted_boxes"]:
+            # Check if we have enough boxes to match (if instance_index is within range)
+            if request.instance_index < len(state["prompted_boxes"]):
+                state["prompted_boxes"] = [box for i, box in enumerate(state["prompted_boxes"]) if i != request.instance_index]
+        
+        if "prompted_points" in state and state["prompted_points"]:
+            # Check if we have enough points to match (if instance_index is within range)
+            if request.instance_index < len(state["prompted_points"]):
+                state["prompted_points"] = [point for i, point in enumerate(state["prompted_points"]) if i != request.instance_index]
         
         session["state"] = state
         
