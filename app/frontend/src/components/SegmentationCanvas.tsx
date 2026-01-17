@@ -712,6 +712,14 @@ export function SegmentationCanvas({
           }}
           className="flex items-center justify-center min-h-[500px] border-2 border-dashed border-border rounded-xl bg-card/50 relative cursor-pointer hover:bg-primary/5 transition-all"
         >
+          {isLoading && (
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-xl flex items-center justify-center z-50">
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="w-12 h-12 text-primary animate-spin" />
+                <p className="text-sm font-medium text-foreground">Uploading image...</p>
+              </div>
+            </div>
+          )}
           <div
             className="flex flex-col items-center justify-center p-12 text-center w-full h-full pointer-events-none"
           >
@@ -843,7 +851,15 @@ export function SegmentationCanvas({
   };
 
   return (
-    <div ref={containerRef} className="relative w-full max-w-full overflow-hidden">
+    <div ref={containerRef} className={`relative w-full max-w-full overflow-hidden ${isLoading && (!imageWidth || !imageHeight) ? 'min-h-[500px]' : ''}`}>
+      {isLoading && (!imageWidth || !imageHeight) && (
+        <div className="absolute inset-0 bg-card/80 backdrop-blur-sm rounded-lg flex items-center justify-center z-50">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="w-12 h-12 text-primary animate-spin" />
+            <p className="text-sm font-medium text-foreground">Uploading image...</p>
+          </div>
+        </div>
+      )}
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
@@ -867,10 +883,10 @@ export function SegmentationCanvas({
         }}
       />
       {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="flex items-center gap-3 bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
-            <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm">Processing...</span>
+        <div className="absolute inset-0 bg-card/80 backdrop-blur-sm rounded-lg flex items-center justify-center z-50">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="w-12 h-12 text-primary animate-spin" />
+            <p className="text-sm font-medium text-foreground">Uploading image...</p>
           </div>
         </div>
       )}
