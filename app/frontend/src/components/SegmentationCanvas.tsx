@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
+import { Upload, Download, Loader2 } from "lucide-react";
 import type { SegmentationResult, RLEMask } from "@/lib/api";
 
 interface Point {
@@ -22,6 +23,14 @@ interface Props {
   isLoading: boolean;
   showMasksAndPrompts?: boolean; // Whether to show masks and prompts (default: true)
   selectedInstanceIndex?: number | null; // Currently selected instance index from sidebar
+  onFileSelect?: (file: File) => void; // Called when a file is selected
+  onDrop?: (e: React.DragEvent) => void; // Called when a file is dropped
+  fileInputRef?: React.RefObject<HTMLInputElement | null>; // Ref to the file input
+  // Session loading props
+  availableSessions?: Array<{ session_folder: string; timestamp: string; image_filename: string; num_instances: number }>;
+  selectedSessionFolder?: string;
+  onSessionFolderChange?: (folder: string) => void;
+  onLoadSession?: () => void;
 }
 
 // Color palette for masks
@@ -139,6 +148,13 @@ export function SegmentationCanvas({
   isLoading,
   showMasksAndPrompts = true,
   selectedInstanceIndex = null,
+  onFileSelect,
+  onDrop,
+  fileInputRef,
+  availableSessions = [],
+  selectedSessionFolder = "",
+  onSessionFolderChange,
+  onLoadSession,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -685,14 +701,82 @@ export function SegmentationCanvas({
 
   if (!imageUrl) {
     return (
-      <div
-        ref={containerRef}
-        className="flex items-center justify-center h-96 border-2 border-dashed border-border rounded-xl bg-card/50"
-      >
-        <p className="text-muted-foreground text-sm">
-          Upload an image to begin segmentation
-        </p>
-      </div>
+      <>
+        <div
+          ref={containerRef}
+          onClick={() => fileInputRef?.current?.click()}
+          onDrop={onDrop}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          className="flex items-center justify-center min-h-[500px] border-2 border-dashed border-border rounded-xl bg-card/50 relative cursor-pointer hover:bg-primary/5 transition-all"
+        >
+          <div
+            className="flex flex-col items-center justify-center p-12 text-center w-full h-full pointer-events-none"
+          >
+            <Upload className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+            <p className="text-lg font-medium mb-2">Upload an image to begin segmentation</p>
+            <p className="text-sm text-muted-foreground mb-4">
+              Click or drag and drop an image here
+            </p>
+            {fileInputRef && (
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file && onFileSelect) {
+                    onFileSelect(file);
+                  }
+                }}
+                className="hidden"
+              />
+            )}
+          </div>
+        </div>
+        
+        {/* Load Session below canvas */}
+        <div className="mt-4 p-4 border border-border rounded-lg bg-card">
+          <div className="flex items-center gap-2 mb-3">
+            <Download className="w-4 h-4 text-muted-foreground" />
+            <p className="text-sm font-medium">Load Previous Session</p>
+          </div>
+          <div className="flex gap-2">
+            <select
+              value={selectedSessionFolder}
+              onChange={(e) => onSessionFolderChange?.(e.target.value)}
+              disabled={isLoading || availableSessions.length === 0}
+              className="flex-1 text-sm px-3 py-2 bg-background border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="">Select a session...</option>
+              {availableSessions.map((session) => (
+                <option key={session.session_folder} value={session.session_folder}>
+                  {session.timestamp} - {session.image_filename} ({session.num_instances} instances)
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={onLoadSession}
+              disabled={isLoading || !selectedSessionFolder}
+              className="px-6 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm font-medium transition-colors"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Loading...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  <span>Import</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </>
     );
   }
 

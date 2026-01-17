@@ -7,6 +7,7 @@ import {
   Square,
   SquareMinus,
   Trash2,
+  RotateCw,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -21,6 +22,8 @@ import {
   Layers,
   Eye,
   EyeOff,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -73,6 +76,7 @@ export default function Home() {
   const [pointMode, setPointMode] = useState<PointMode>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [selectedInstanceIndex, setSelectedInstanceIndex] = useState<number | null>(null);
   const [showMasksAndPrompts, setShowMasksAndPrompts] = useState(true); // Default: visible
   const [backendStatus, setBackendStatus] = useState<
@@ -85,6 +89,7 @@ export default function Home() {
   const [clearAllHoldProgress, setClearAllHoldProgress] = useState(0);
   const clearAllTimerRef = useRef<NodeJS.Timeout | null>(null);
   const clearAllStartTimeRef = useRef<number | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Timing state (server-side processing times)
   const [timings, setTimings] = useState<TimingEntry[]>([]);
@@ -378,13 +383,10 @@ export default function Home() {
       const response = await saveAnnotations(sessionId);
       
       // Show success message with file location
-      const message = `Annotations saved successfully!\n\n` +
-        `Directory: ${response.output_directory}\n` +
-        `Files saved: ${response.files_saved.length}\n` +
-        `Files: ${response.files_saved.join(", ")}`;
+      const message = `Files saved: ${response.files_saved.length}\n\n` +
+      `Directory: ${response.output_directory}\n`;
       
-      // Show success message (you can replace this with a toast notification)
-      alert(message);
+      setSuccessMessage(message);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save annotations");
@@ -462,119 +464,36 @@ export default function Home() {
       : null;
 
   return (
-    <main className="min-h-screen p-4 md:p-6 overflow-x-hidden">
+    <main className="min-h-screen overflow-x-hidden flex flex-col">
       {/* Header */}
-      <header className="w-full max-w-[1600px] mx-auto mb-6">
-        <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-4 lg:gap-6">
-          <div className="flex items-center gap-5">
-            <div className="p-2 bg-primary/20 rounded-lg pulse-glow">
-              <Sparkles className="w-6 h-6 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">SAM3 Studio</h1>
-              <p className="text-sm text-muted-foreground">
-                Interactive segmentation with<br />
-                box & point prompts
-              </p>
-            </div>
+      {!isFullscreen && (
+        <header className="fixed top-0 left-0 right-0 w-full bg-background/95 backdrop-blur-sm border-b border-border z-50 flex-shrink-0">
+          <div className="max-w-[min(95vw,1600px)] mx-auto p-4 md:p-6">
+            <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-4 lg:gap-6">
+              <div className="flex items-center gap-5">
+                <div className="p-2 bg-primary/20 rounded-lg pulse-glow">
+                  <Sparkles className="w-6 h-6 text-primary" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold tracking-tight">SAM3 Studio</h1>
+                  <p className="text-sm text-muted-foreground">
+                    Interactive Segmentation Environment
+                  </p>
+                </div>
+              </div>
+              <div></div>
+              <div></div>
           </div>
-          <div></div>
-          <div></div>
         </div>
       </header>
+      )}
 
-      <div className="w-full max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-4 lg:gap-6">
+      {/* Spacer to account for fixed header */}
+      {!isFullscreen && <div className="h-[150px] flex-shrink-0"></div>}
+
+      <div className="w-full max-w-[min(95vw,1600px)] mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-[340px_1fr_280px] gap-4 lg:gap-6 flex-grow">
         {/* Sidebar Controls */}
         <aside className="space-y-4">
-          {/* Upload Card */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Upload className="w-4 h-4" />
-                Image Source
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                onDrop={handleDrop}
-                onDragOver={(e) => e.preventDefault()}
-                className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer"
-              >
-                <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  Click or drop image here
-                </p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleFileSelect(file);
-                  }}
-                  className="hidden"
-                />
-              </div>
-              {imageWidth > 0 && (
-                <p className="text-xs text-muted-foreground mt-2 text-center">
-                  {imageWidth} × {imageHeight} px
-                </p>
-              )}
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full mt-4"
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                Upload Image
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Load Session Card */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Download className="w-4 h-4" />
-                Load Session
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Load a previous annotation session to continue editing.
-              </p>
-              <select
-                value={selectedSessionFolder}
-                onChange={(e) => setSelectedSessionFolder(e.target.value)}
-                disabled={isLoading || availableSessions.length === 0}
-                className="w-full text-sm px-3 py-2 bg-card border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">Select a session...</option>
-                {availableSessions.map((session) => (
-                  <option key={session.session_folder} value={session.session_folder}>
-                    {session.timestamp} - {session.image_filename} ({session.num_instances} instances)
-                  </option>
-                ))}
-              </select>
-                <Button
-                variant="default"
-                size="sm"
-                onClick={handleLoadSession}
-                disabled={isLoading || !selectedSessionFolder}
-                className="w-full"
-                >
-                  {isLoading ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                  <Download className="w-4 h-4 mr-2" />
-                  )}
-                Load Session
-                </Button>
-            </CardContent>
-          </Card>
-
           {/* Box Prompt Card */}
           <Card className={!sessionId ? "opacity-50 pointer-events-none" : ""}>
             <CardHeader className="pb-3">
@@ -798,12 +717,40 @@ export default function Home() {
               </CardContent>
             </Card>
           )}
+          {successMessage && (
+            <Card className="border-primary/50 bg-primary/10 animate-fade-in-up">
+              <CardContent className="py-4 pr-4">
+                <div className="flex items-start justify-between">
+                  <CheckCircle2 className="w-5 h-5 text-primary flex-shrink-0 mt-2" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-primary mb-2 ml-3 mt-2">Your session was saved!</p>
+                    <div className="text-xs text-muted-foreground space-y-1 mb-2 -ml-1">
+                      {successMessage.split('\n').map((line, idx) => (
+                        line.trim() && (
+                          <p key={idx} className={idx === 0 ? "font-medium text-foreground -ml-4" : "-ml-4"}>
+                            {line}
+                          </p>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSuccessMessage(null)}
+                    className="flex-shrink-0 -mt-1 p-1 text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-primary/10 mr-2 mt-1.5"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </aside>
 
         {/* Main Canvas Area */}
         <section className="relative min-w-0">
           {/* Backend status - absolutely positioned above canvas, right aligned */}
-          <div className="absolute -top-8 right-0 flex justify-end mr-4 z-10">
+          {!isFullscreen && (
+            <div className="absolute -top-8 right-0 flex justify-end mr-4 z-20">
             {backendStatus === "checking" && (
               <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -823,6 +770,7 @@ export default function Home() {
               </div>
             )}
           </div>
+          )}
           <Card className="overflow-hidden">
             <CardContent className="p-4">
               <SegmentationCanvas
@@ -838,6 +786,13 @@ export default function Home() {
                 isLoading={isLoading}
                 showMasksAndPrompts={showMasksAndPrompts}
                 selectedInstanceIndex={selectedInstanceIndex}
+                onFileSelect={handleFileSelect}
+                onDrop={handleDrop}
+                fileInputRef={fileInputRef}
+                availableSessions={availableSessions}
+                selectedSessionFolder={selectedSessionFolder}
+                onSessionFolderChange={setSelectedSessionFolder}
+                onLoadSession={handleLoadSession}
               />
             </CardContent>
           </Card>
@@ -861,35 +816,58 @@ export default function Home() {
                 </div>
               </div>
               
-              {/* Toggle button on the right */}
-              <div className="flex items-center gap-2">
-                <label
-                  htmlFor="toggle-masks"
-                  className="flex cursor-pointer items-center gap-2"
-                >
-                  {showMasksAndPrompts ? (
-                    <Eye className="w-4 h-4" />
-                  ) : (
-                    <EyeOff className="w-4 h-4" />
-                  )}
-                  <span>Masks & Prompts</span>
-                </label>
-                <button
-                  id="toggle-masks"
-                  onClick={() => setShowMasksAndPrompts(!showMasksAndPrompts)}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
-                    showMasksAndPrompts ? "bg-primary" : "bg-muted"
-                  }`}
-                  role="switch"
-                  aria-checked={showMasksAndPrompts}
-                  aria-label="Toggle masks and prompts visibility"
-                >
-                  <span
-                    className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform ${
-                      showMasksAndPrompts ? "translate-x-5" : "translate-x-0.5"
+              {/* Toggle button and fullscreen button on the right */}
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <label
+                    htmlFor="toggle-masks"
+                    className="flex cursor-pointer items-center gap-2"
+                  >
+                    {showMasksAndPrompts ? (
+                      <Eye className="w-4 h-4" />
+                    ) : (
+                      <EyeOff className="w-4 h-4" />
+                    )}
+                    <span>Masks & Prompts</span>
+                  </label>
+                  <button
+                    id="toggle-masks"
+                    onClick={() => setShowMasksAndPrompts(!showMasksAndPrompts)}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+                      showMasksAndPrompts ? "bg-primary" : "bg-muted"
                     }`}
-                  />
-                </button>
+                    role="switch"
+                    aria-checked={showMasksAndPrompts}
+                    aria-label="Toggle masks and prompts visibility"
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform ${
+                        showMasksAndPrompts ? "translate-x-5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+                {isFullscreen ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsFullscreen(false)}
+                    className="flex items-center gap-2"
+                    title="Exit fullscreen"
+                  >
+                    <Minimize2 className="w-4 h-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsFullscreen(true)}
+                    className="flex items-center gap-2"
+                    title="Enter fullscreen"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -1027,6 +1005,9 @@ export default function Home() {
                 </p>
               )}
               <div className="mt-4 pt-4 border-t border-border">
+                <p className="text-xs text-muted-foreground mb-3">
+                  Session Actions
+                </p>
                 <Button
                   variant="default"
                   size="sm"
@@ -1034,8 +1015,10 @@ export default function Home() {
                   disabled={isLoading || maskCount === 0}
                   className="w-full"
                 >
-                  <Download className="w-4 h-4 mr-2" />
-                  Save Session
+                  <div className="flex items-center justify-center">
+                    <Download className="w-4 h-4 mr-2" />
+                    <span>Save Session</span>
+                  </div>
                 </Button>
                 <div className="pt-4">
                   <Button
@@ -1056,8 +1039,8 @@ export default function Home() {
                         </>
                       ) : (
                         <>
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          <span>Clear All</span>
+                          <RotateCw className="w-4 h-4 mr-2" />
+                          <span>Restart</span>
                         </>
                       )}
                     </div>
@@ -1070,11 +1053,15 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="max-w-[1600px] mx-auto mt-12 pt-6 border-t border-border">
-        <p className="text-xs text-muted-foreground text-center">
-          SAM3 Interactive Segmentation • MLX Backend • Next.js Frontend
-        </p>
-      </footer>
+      {!isFullscreen && (
+        <footer className="mx-auto w-full max-w-[min(95vw,1600px)] mt-6 flex-shrink-0">
+          <div className="border-t border-border pt-6 pb-6 w-full">
+            <p className="text-xs text-muted-foreground text-center">
+              SAM3 Interactive Segmentation • MLX Backend • Next.js Frontend
+            </p>
+          </div>
+        </footer>
+      )}
     </main>
   );
 }
