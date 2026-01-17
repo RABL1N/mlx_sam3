@@ -35,7 +35,7 @@ trap cleanup SIGINT SIGTERM
 # Install backend dependencies using uv (into the project's venv)
 echo -e "${YELLOW}Ensuring backend dependencies...${NC}"
 cd "$PROJECT_ROOT"
-uv pip install -r "$BACKEND_DIR/requirements.txt" --quiet
+uv pip install -e ".[backend]" --quiet
 
 # Check if frontend dependencies are installed
 if [ ! -d "$FRONTEND_DIR/node_modules" ]; then

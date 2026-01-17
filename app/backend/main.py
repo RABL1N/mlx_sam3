@@ -4,6 +4,7 @@ Provides endpoints for image upload, text prompts, box prompts, and segmentation
 """
 
 import io
+import logging
 import os
 import sys
 import time
@@ -11,6 +12,12 @@ import uuid
 from contextlib import asynccontextmanager
 
 import numpy as np
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -85,6 +92,7 @@ class PointPromptRequest(BaseModel):
     session_id: str
     point: list[float]  # [x, y] normalized in [0, 1]
     label: bool  # True for positive, False for negative
+    selected_instance_index: int | None = None  # Optional instance index for refinement
 
 
 class ConfidenceRequest(BaseModel):
@@ -345,6 +353,12 @@ async def add_box_prompt(request: BoxPromptRequest):
         if "prompted_boxes" not in state:
             state["prompted_boxes"] = []
         
+        # Track which prompt created which instance
+        if "instance_prompt_types" not in state:
+            state["instance_prompt_types"] = []
+        
+        num_masks_before = len(state.get("masks", [])) if state.get("masks") is not None else 0
+        
         state["prompted_boxes"].append({
             "box": [x_min, y_min, x_max, y_max],
             "label": request.label
@@ -353,6 +367,16 @@ async def add_box_prompt(request: BoxPromptRequest):
         start_time = time.perf_counter()
         state = processor.add_geometric_prompt(request.box, request.label, state)
         processing_time_ms = (time.perf_counter() - start_time) * 1000
+        
+        # Check if a new instance was created (only for positive prompts)
+        num_masks_after = len(state.get("masks", [])) if state.get("masks") is not None else 0
+        if request.label and num_masks_after > num_masks_before:
+            # New instance created - track that it was created by a box prompt
+            box_prompt_index = len(state["prompted_boxes"]) - 1
+            state["instance_prompt_types"].append({"type": "box", "prompt_index": box_prompt_index})
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Tracked new instance created by box prompt at index {box_prompt_index} (masks: {num_masks_before} -> {num_masks_after})")
         
         # Remove mask overlap (earlier masks take priority)
         if "masks" in state and state["masks"] is not None and len(state["masks"]) > 0:
@@ -474,15 +498,28 @@ async def set_confidence(request: ConfidenceRequest):
 @app.post("/segment/point")
 async def add_point_prompt(request: PointPromptRequest):
     """Add a point prompt (positive or negative) and re-segment."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"=== add_point_prompt called ===")
+    logger.info(f"Point: {request.point}, Label (positive): {request.label}, Selected instance: {request.selected_instance_index}")
+    
     if processor is None:
+        logger.error("Processor not loaded")
         raise HTTPException(status_code=503, detail="Model not loaded yet")
     
     session = sessions.get(request.session_id)
     if not session:
+        logger.error(f"Session not found: {request.session_id}")
         raise HTTPException(status_code=404, detail="Session not found")
     
     try:
         state = session["state"]
+        
+        # Log current state
+        num_masks = len(state.get("masks", [])) if state.get("masks") is not None else 0
+        num_prompted_points = len(state.get("prompted_points", [])) if state.get("prompted_points") is not None else 0
+        logger.info(f"Current state: {num_masks} masks, {num_prompted_points} prompted points")
         
         # Check if point is on an existing mask BEFORE processing
         # If it is, silently reject (existing mask takes priority)
@@ -495,30 +532,60 @@ async def add_point_prompt(request: PointPromptRequest):
                 
                 img_w = state["original_width"]
                 img_h = state["original_height"]
+                logger.info(f"Checking point on {masks_array.shape[0]} existing masks (image size: {img_w}x{img_h})")
                 
                 # Check if point is on any existing mask
                 for i in range(masks_array.shape[0]):
                     mask = masks_array[i]
                     if check_point_on_mask(request.point, mask, img_w, img_h):
-                        # Point is on existing mask - silently reject
+                        logger.warning(f"Point is on existing mask {i} - REJECTING prompt")
                         return {
                             "session_id": request.session_id,
                             "point_type": "positive" if request.label else "negative",
                             "results": serialize_state(state),
                             "processing_time_ms": 0.0
                         }
+                
+                logger.info("Point is not on any existing mask - proceeding with processing")
         
+        # Log state before calling processor
+        num_masks_before = len(state.get("masks", [])) if state.get("masks") is not None else 0
+        num_boxes_before = len(state.get("boxes", [])) if state.get("boxes") is not None else 0
+        logger.info(f"Before processor: {num_masks_before} masks, {num_boxes_before} boxes")
+        
+        logger.info("Calling processor.add_point_prompt...")
         start_time = time.perf_counter()
         state = processor.add_point_prompt(request.point, request.label, state)
         processing_time_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"Processor returned in {processing_time_ms:.2f}ms")
+        
+        # Check what processor returned
+        num_masks_after = len(state.get("masks", [])) if state.get("masks") is not None else 0
+        num_boxes_after = len(state.get("boxes", [])) if state.get("boxes") is not None else 0
+        logger.info(f"After processor: {num_masks_after} masks, {num_boxes_after} boxes")
         
         # Store prompted point for display (only if we get here, meaning it wasn't rejected)
         if "prompted_points" not in state:
             state["prompted_points"] = []
+        
+        # Track which prompt created which instance
+        if "instance_prompt_types" not in state:
+            state["instance_prompt_types"] = []
+        
         state["prompted_points"].append({
             "point": request.point,
             "label": request.label
         })
+        logger.info(f"Added prompt to prompted_points (now {len(state['prompted_points'])} prompts)")
+        logger.info(f"All prompted points: {state['prompted_points']}")
+        
+        # Check if a new instance was created (only for positive prompts)
+        # Use num_masks_before (set before processor) and num_masks_after (set after processor)
+        if request.label and num_masks_after > num_masks_before:
+            # New instance created - track that it was created by a point prompt
+            point_prompt_index = len(state["prompted_points"]) - 1
+            state["instance_prompt_types"].append({"type": "point", "prompt_index": point_prompt_index})
+            logger.info(f"Tracked new instance created by point prompt at index {point_prompt_index} (masks: {num_masks_before} -> {num_masks_after})")
         
         # Remove mask overlap (earlier masks take priority)
         if "masks" in state and state["masks"] is not None and len(state["masks"]) > 0:
@@ -560,6 +627,7 @@ async def add_point_prompt(request: PointPromptRequest):
             
             # Check IoU with existing boxes (excluding the newly created one)
             if state["boxes"].shape[0] > 1:
+                logger.info(f"Checking IoU with {state['boxes'].shape[0] - 1} existing boxes...")
                 # Convert to numpy for IoU calculation
                 boxes_np = np.array(state["boxes"])
                 new_box = boxes_np[-1]
@@ -568,7 +636,9 @@ async def add_point_prompt(request: PointPromptRequest):
                     iou = calculate_box_iou(new_box, existing_box)
                     # Ensure iou is a scalar float
                     iou_val = float(iou) if not isinstance(iou, (int, float)) else float(iou)
+                    logger.info(f"IoU with box {i}: {iou_val:.3f}")
                     if iou_val > 0.3:
+                        logger.warning(f"New instance overlaps too much with box {i} (IoU: {iou_val:.3f}) - REMOVING new instance")
                         # Remove the new instance if it overlaps too much
                         state["masks"] = state["masks"][:-1]
                         # Remove last box from MLX array
@@ -583,6 +653,11 @@ async def add_point_prompt(request: PointPromptRequest):
                         # Remove the point from prompted_points since we're rejecting it
                         if "prompted_points" in state and state["prompted_points"]:
                             state["prompted_points"] = state["prompted_points"][:-1]
+                            logger.info(f"Removed prompt from prompted_points (now {len(state['prompted_points'])} prompts)")
+                        # Also remove the prompt tracking entry if we added one (should be the last entry)
+                        if "instance_prompt_types" in state and len(state["instance_prompt_types"]) > 0:
+                            state["instance_prompt_types"] = state["instance_prompt_types"][:-1]
+                            logger.info("Removed prompt tracking entry for rejected instance")
                         session["state"] = state
                         return {
                             "session_id": request.session_id,
@@ -590,8 +665,14 @@ async def add_point_prompt(request: PointPromptRequest):
                             "results": serialize_state(state),
                             "processing_time_ms": processing_time_ms
                         }
+                logger.info("No high IoU overlaps found - keeping new instance")
         
         session["state"] = state
+        
+        # Final state check
+        final_num_masks = len(state.get("masks", [])) if state.get("masks") is not None else 0
+        final_num_prompts = len(state.get("prompted_points", [])) if state.get("prompted_points") is not None else 0
+        logger.info(f"=== Returning result: {final_num_masks} masks, {final_num_prompts} prompted points ===")
         
         return {
             "session_id": request.session_id,
@@ -603,10 +684,7 @@ async def add_point_prompt(request: PointPromptRequest):
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        error_trace = traceback.format_exc()
-        print(f"Error in add_point_prompt: {str(e)}")
-        print(f"Traceback: {error_trace}")
+        logger.error(f"Error in add_point_prompt: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error adding point prompt: {str(e)}")
 
 
@@ -1126,6 +1204,14 @@ async def remove_instance(request: RemoveInstanceRequest):
                 detail=f"Instance index {request.instance_index} is out of range. Valid range: 0-{num_instances-1}"
             )
         
+        # Log BEFORE we remove anything
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"=== remove_instance called for index {request.instance_index} ===")
+        num_masks_before = len(state.get('masks', [])) if state.get('masks') is not None else 0
+        num_boxes_before = len(state.get('boxes', [])) if state.get('boxes') is not None else 0
+        logger.info(f"Before removal: {num_masks_before} masks, {num_boxes_before} boxes, {len(state.get('prompted_boxes', []))} box prompts, {len(state.get('prompted_points', []))} point prompts")
+        
         # Remove the instance at the specified index
         # Handle MLX arrays for masks and boxes
         if hasattr(state["masks"], 'shape'):
@@ -1167,18 +1253,60 @@ async def remove_instance(request: RemoveInstanceRequest):
         if "category_ids" in state and state["category_ids"] is not None:
             state["category_ids"] = [cat_id for i, cat_id in enumerate(state["category_ids"]) if i != request.instance_index]
         
-        # Remove the corresponding prompt (box or point) that created this instance
-        # We assume prompts are in the same order as instances (instance i was created by prompt i)
-        # When removing instance at index i, remove prompt at index i
-        if "prompted_boxes" in state and state["prompted_boxes"]:
-            # Check if we have enough boxes to match (if instance_index is within range)
-            if request.instance_index < len(state["prompted_boxes"]):
-                state["prompted_boxes"] = [box for i, box in enumerate(state["prompted_boxes"]) if i != request.instance_index]
+        # Also remove mask_logits if it exists (processor uses this if available)
+        if "mask_logits" in state and state["mask_logits"] is not None:
+            if hasattr(state["mask_logits"], 'shape'):
+                mask_logits_np = np.array(state["mask_logits"])
+                indices = [i for i in range(mask_logits_np.shape[0]) if i != request.instance_index]
+                if indices:
+                    state["mask_logits"] = mx.array(mask_logits_np[indices])
+                else:
+                    # No masks left - get dimensions from first mask
+                    if mask_logits_np.shape[0] > 0:
+                        h, w = mask_logits_np.shape[2], mask_logits_np.shape[3]
+                        state["mask_logits"] = mx.zeros((0, 1, h, w))
+                    else:
+                        del state["mask_logits"]
+            else:
+                state["mask_logits"] = [logits for i, logits in enumerate(state["mask_logits"]) if i != request.instance_index]
         
-        if "prompted_points" in state and state["prompted_points"]:
-            # Check if we have enough points to match (if instance_index is within range)
-            if request.instance_index < len(state["prompted_points"]):
-                state["prompted_points"] = [point for i, point in enumerate(state["prompted_points"]) if i != request.instance_index]
+        # Remove the prompt that created this instance
+        logger.info(f"instance_prompt_types: {state.get('instance_prompt_types', [])}, trying to remove instance {request.instance_index}")
+        if "instance_prompt_types" in state and request.instance_index < len(state["instance_prompt_types"]):
+            prompt_info = state["instance_prompt_types"][request.instance_index]
+            prompt_type = prompt_info.get("type")
+            prompt_index = prompt_info.get("prompt_index")
+            
+            logger.info(f"Removing {prompt_type} prompt at index {prompt_index} that created instance {request.instance_index}")
+            
+            if prompt_type == "box" and "prompted_boxes" in state and prompt_index < len(state["prompted_boxes"]):
+                state["prompted_boxes"] = [box for i, box in enumerate(state["prompted_boxes"]) if i != prompt_index]
+                # Update prompt indices for instances created after this one
+                for i in range(len(state["instance_prompt_types"])):
+                    if i != request.instance_index and state["instance_prompt_types"][i].get("type") == "box":
+                        if state["instance_prompt_types"][i].get("prompt_index", 0) > prompt_index:
+                            state["instance_prompt_types"][i]["prompt_index"] -= 1
+            elif prompt_type == "point" and "prompted_points" in state and prompt_index < len(state["prompted_points"]):
+                state["prompted_points"] = [point for i, point in enumerate(state["prompted_points"]) if i != prompt_index]
+                # Update prompt indices for instances created after this one
+                for i in range(len(state["instance_prompt_types"])):
+                    if i != request.instance_index and state["instance_prompt_types"][i].get("type") == "point":
+                        if state["instance_prompt_types"][i].get("prompt_index", 0) > prompt_index:
+                            state["instance_prompt_types"][i]["prompt_index"] -= 1
+            
+            # Remove the prompt tracking entry for this instance
+            state["instance_prompt_types"] = [info for i, info in enumerate(state["instance_prompt_types"]) if i != request.instance_index]
+        else:
+            # Fallback: if we don't have tracking info, clear all prompts (old behavior)
+            logger.warning(f"No prompt tracking info for instance {request.instance_index}, clearing all prompts")
+            if "prompted_boxes" in state:
+                state["prompted_boxes"] = []
+            if "prompted_points" in state:
+                state["prompted_points"] = []
+        
+        num_masks_after = len(state.get('masks', [])) if state.get('masks') is not None else 0
+        num_boxes_after = len(state.get('boxes', [])) if state.get('boxes') is not None else 0
+        logger.info(f"After removal: {num_masks_after} masks, {num_boxes_after} boxes, {len(state.get('prompted_boxes', []))} box prompts, {len(state.get('prompted_points', []))} point prompts")
         
         session["state"] = state
         

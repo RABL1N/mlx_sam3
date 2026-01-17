@@ -1,15 +1,17 @@
 <div align="center">
 
-# 🎯 MLX SAM3
+# 🎯 MLX SAM3 Studio
 
-**Segment Anything Model 3 — Native Apple Silicon Implementation**
+**Interactive Image Segmentation Application — Built on MLX SAM3**
 
 [![MLX](https://img.shields.io/badge/MLX-Apple%20Silicon-black?logo=apple)](https://github.com/ml-explore/mlx)
 [![Python 3.13+](https://img.shields.io/badge/Python-3.13+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![HuggingFace](https://img.shields.io/badge/🤗-MLX%20Community-yellow)](https://huggingface.co/mlx-community/sam3-image)
 
-*A high-performance MLX port of Meta's SAM3 for interactive image segmentation on Mac*
+*An interactive web application for creating instance segmentation annotations using SAM3 on Apple Silicon*
+
+> **Note**: This repository is specifically designed for **interactive annotation workflows**. If you're looking for the base MLX SAM3 implementation or just want to use SAM3 programmatically, check out the [original MLX SAM3 repository](https://github.com/Deekshith-Dade/mlx_sam3).
 
 <br>
 
@@ -19,23 +21,15 @@
 
 ---
 
-<table>
-<tr>
-<td>
-<strong>📖 New to SAM3?</strong> Check out the accompanying blog post where I explain the SAM3 architecture, how it works, and what makes it special: <a href="https://deekshith.me/blog/mlx-sam3"><strong>Understanding SAM3 →</strong></a>
-</td>
-</tr>
-</table>
-
----
-
 ## ✨ Features
 
-- **🚀 Native Apple Silicon** — Optimized for M1/M2/M3/M4 chips using MLX
-- **📝 Text Prompts** — Segment objects by describing them ("car", "person", "dog")
+- **🎨 Interactive Web Interface** — Beautiful, responsive UI for real-time segmentation
 - **📦 Box Prompts** — Draw bounding boxes to include or exclude regions
-- **🎨 Interactive Studio** — Beautiful web interface for real-time segmentation
-- **🐍 Python API** — Simple programmatic access for scripting and integration
+- **📍 Point Prompts** — Click points for precise positive/negative guidance
+- **🔧 Instance Refinement** — Select instances and refine masks with negative prompts
+- **💾 Session Management** — Save and load annotation sessions with automatic image loading
+- **📊 COCO Export** — Export annotations in standard COCO format with masks and visualizations
+- **🚀 Native Apple Silicon** — Optimized for M1/M2/M3/M4/M5/M6 chips using MLX
 - **⬇️ Auto Model Download** — Weights automatically fetched from HuggingFace
 
 ---
@@ -45,16 +39,18 @@
 <div align="center">
 <table>
 <tr>
-<td><img src="assets/images/appdemo.png" alt="SAM3 Demo - Car Detection" width="100%"></td>
-<td><img src="assets/images/appdemo1.png" alt="SAM3 Demo - Coat Segmentation" width="100%"></td>
+<td style="width: 50%;"><img src="assets/images/pdish_raw.jpg" alt="Original petri dish image" style="width: 100%; max-width: 500px; height: auto;"></td>
+<td style="width: 50%;"><img src="assets/images/pdish_labeled.jpg" alt="Labeled petri dish with 61 segmented instances" style="width: 100%; max-width: 500px; height: auto;"></td>
 </tr>
 <tr>
-<td align="center"><em>Object detection with "car" prompt</em></td>
-<td align="center"><em>Semantic segmentation with "coat" prompt</em></td>
+<td align="center"><em>Original image</em></td>
+<td align="center"><em>61 segmented instances with colored overlays</em></td>
 </tr>
 </table>
 
-*SAM3 Studio — Interactive segmentation with text and box prompts*
+*Instance segmentation example — Petri dish with fungal colonies*
+
+> **Note**: The petri dish annotation above was created in less than 5 minutes using SAM3 Studio. Each of the 61 instances was segmented with just 1 prompt per mask (box or point), and each mask is saved individually as a separate PNG file alongside the COCO-format JSON annotations.
 
 </div>
 
@@ -62,14 +58,30 @@
 
 ## 📋 Prerequisites
 
-| Requirement | Version | Notes |
-|-------------|---------|-------|
-| **macOS** | 13.0+ | Apple Silicon required (M1/M2/M3/M4) |
-| **Python** | 3.13+ | Required for MLX compatibility |
-| **Node.js** | 18+ | For the web interface |
-| **uv** | Latest | *Optional but recommended* — [Install uv](https://docs.astral.sh/uv/getting-started/installation/) |
+| Requirement       | Version | Notes                                                                                              |
+| ----------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| **macOS**   | 13.0+   | Apple Silicon required (M1/M2/M3/M4)                                                               |
+| **Python**  | 3.13+   | Required for MLX compatibility                                                                     |
+| **Node.js** | 18+     | For the web interface                                                                              |
+| **uv**      | Latest  | *Optional but recommended* — [Install uv](https://docs.astral.sh/uv/getting-started/installation/) |
 
 > ⚠️ **Apple Silicon Only**: This project uses [MLX](https://github.com/ml-explore/mlx), Apple's machine learning framework optimized exclusively for Apple Silicon.
+
+---
+
+## 📦 Dependencies
+
+All Python dependencies are managed in `pyproject.toml`:
+
+- **Core dependencies**: Installed with `pip install -e .` or `uv sync`
+
+  - MLX, NumPy, Pillow, and all SAM3 model dependencies
+- **Backend dependencies** (optional): Installed with `pip install -e ".[backend]"` or `uv sync --extra backend`
+
+  - FastAPI, Uvicorn, and other web server dependencies
+  - Required only if running the SAM3 Studio web application
+
+> **Note**: The `run.sh` script automatically installs backend dependencies when needed.
 
 ---
 
@@ -81,11 +93,11 @@ If you have [`uv`](https://docs.astral.sh/uv/) installed:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/mlx-sam3.git
+git clone https://github.com/RABL1N/mlx-sam3.git
 cd mlx-sam3
 
-# Install project dependencies
-uv sync
+# Install project dependencies (including backend extras)
+uv sync --extra backend
 
 # Launch the app (backend + frontend)
 cd app && ./run.sh
@@ -94,6 +106,7 @@ cd app && ./run.sh
 The first run will automatically download MLX weights from [mlx-community/sam3-image](https://huggingface.co/mlx-community/sam3-image) (~3.5GB).
 
 **Access the app:**
+
 - 🌐 **Frontend**: http://localhost:3000
 - 🔌 **API**: http://localhost:8000
 - 📚 **API Docs**: http://localhost:8000/docs
@@ -118,15 +131,15 @@ cd mlx-sam3
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install the package
-pip install -e .
+# Install the package with backend dependencies (required for web app)
+pip install -e ".[backend]"
 ```
 
 #### 2. Start the Backend
 
 ```bash
+# Start the backend server
 cd app/backend
-pip install -r requirements.txt
 python main.py
 ```
 
@@ -148,7 +161,9 @@ The frontend will start on http://localhost:3000
 
 ## 🐍 Python API
 
-Use SAM3 directly in your Python scripts:
+> **Note**: The Python API is available for advanced use cases, but the primary focus of this repository is the interactive web application. For programmatic SAM3 usage, consider the [original MLX SAM3 implementation](https://github.com/Deekshith-Dade/mlx_sam3).
+
+You can also use SAM3 directly in your Python scripts:
 
 ```python
 from PIL import Image
@@ -174,7 +189,7 @@ scores = state["scores"]     # Confidence scores
 print(f"Found {len(scores)} objects")
 ```
 
-### Adding Box Prompts
+### Adding Box and Point Prompts
 
 ```python
 # Add a box prompt (normalized coordinates: center_x, center_y, width, height)
@@ -182,6 +197,23 @@ print(f"Found {len(scores)} objects")
 state = processor.add_geometric_prompt(
     box=[0.5, 0.5, 0.3, 0.3],  # Center of image, 30% width/height
     label=True,
+    state=state
+)
+
+# Add a point prompt (normalized coordinates: [x, y] in [0, 1])
+# label=True for positive, label=False for negative
+state = processor.add_point_prompt(
+    point=[0.5, 0.5],  # Center of image
+    label=True,
+    state=state
+)
+
+# Refine an existing instance with negative prompts
+# First select an instance, then use negative prompts to exclude regions
+state = processor.add_point_prompt(
+    point=[0.6, 0.6],
+    label=False,  # Negative prompt
+    selected_instance_index=0,  # Refine instance 0
     state=state
 )
 ```
@@ -216,22 +248,31 @@ mlx-sam3/
 │   ├── frontend/            # Next.js React app
 │   └── run.sh               # One-command launcher
 ├── assets/                  # Static assets & test images
+├── annotations/             # Saved annotation sessions
+│   └── session_{timestamp}/ # Session directories (COCO JSON, masks, visualizations)
 ├── examples/                # Jupyter notebook examples
-└── pyproject.toml           # Project configuration
+└── pyproject.toml           # Project configuration (all dependencies)
 ```
 
 ---
 
 ## 🔌 API Reference
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Check if the model is loaded and ready |
-| `/upload` | POST | Upload an image and create a session |
-| `/segment/text` | POST | Segment using a text prompt |
-| `/segment/box` | POST | Add a box prompt (include/exclude) |
-| `/reset` | POST | Clear all prompts for a session |
-| `/session/{id}` | DELETE | Delete a session and free memory |
+| Endpoint              | Method | Description                               |
+| --------------------- | ------ | ----------------------------------------- |
+| `/health`           | GET    | Check if the model is loaded and ready    |
+| `/upload`           | POST   | Upload an image and create a session      |
+| `/segment/text`     | POST   | Segment using a text prompt               |
+| `/segment/box`      | POST   | Add a box prompt (include/exclude)        |
+| `/segment/point`    | POST   | Add a point prompt (include/exclude)      |
+| `/reset`            | POST   | Clear all prompts and masks for a session |
+| `/save-annotations` | POST   | Save annotations in COCO format           |
+| `/load-session`     | POST   | Load a previously saved session           |
+| `/list-sessions`    | GET    | List all available annotation sessions    |
+| `/update-category`  | POST   | Update category label for an instance     |
+| `/remove-instance`  | POST   | Remove a specific instance                |
+| `/confidence`       | POST   | Update confidence threshold               |
+| `/session/{id}`     | DELETE | Delete a session and free memory          |
 
 ### Example API Call
 
@@ -242,10 +283,61 @@ curl -X POST "http://localhost:8000/upload" \
 
 # Response: {"session_id": "abc-123", "width": 1920, "height": 1080, ...}
 
-# Segment with text
-curl -X POST "http://localhost:8000/segment/text" \
+# Segment with point prompt
+curl -X POST "http://localhost:8000/segment/point" \
   -H "Content-Type: application/json" \
-  -d '{"session_id": "abc-123", "prompt": "car"}'
+  -d '{"session_id": "abc-123", "point": [0.5, 0.5], "label": true}'
+
+# Save annotations
+curl -X POST "http://localhost:8000/save-annotations" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "abc-123", "image_id": 1}'
+```
+
+---
+
+## 🎯 Using SAM3 Studio
+
+SAM3 Studio is designed for creating instance segmentation annotations through an interactive web interface:
+
+1. **Start the application:**
+
+   ```bash
+   cd app && ./run.sh
+   ```
+2. **Open in browser:** Navigate to `http://localhost:3000`
+3. **Create annotations:**
+
+   - Upload an image or load a previous session
+   - Use **box prompts** (draw boxes) or **point prompts** (click points) to segment instances
+   - Select an instance to refine it with negative prompts
+   - Click "Save Session" to export annotations in COCO format
+4. **Output:** Annotations are saved to `annotations/session_{timestamp}/` with:
+
+   - COCO JSON file with all instances
+   - Individual mask PNGs for each instance
+   - Visualization images for each instance
+   - Original image
+
+### Annotation Format
+
+Annotations follow the COCO format with additional fields:
+
+```json
+{
+  "id": 1,
+  "image_id": 1,
+  "category_id": null,
+  "segmentation": {
+    "counts": [804394, 10, 1007, 20, ...],
+    "size": [982, 1023]
+  },
+  "bbox": [270.86, 785.04, 354.05, 870.36],
+  "area": 5430,
+  "iscrowd": 0,
+  "score": 0.782,
+  "instance_id": 0
+}
 ```
 
 ---
@@ -268,12 +360,12 @@ jupyter notebook
 
 ## 🛠️ Tech Stack
 
-| Component | Technology |
-|-----------|------------|
-| **ML Framework** | [MLX](https://github.com/ml-explore/mlx) |
-| **Backend** | FastAPI, Uvicorn |
-| **Frontend** | Next.js 16, React 19, Tailwind CSS 4 |
-| **Model** | [SAM3 MLX](https://huggingface.co/mlx-community/sam3-image) |
+| Component              | Technology                                               |
+| ---------------------- | -------------------------------------------------------- |
+| **ML Framework** | [MLX](https://github.com/ml-explore/mlx)                    |
+| **Backend**      | FastAPI, Uvicorn                                         |
+| **Frontend**     | Next.js 16, React 19, Tailwind CSS 4                     |
+| **Model**        | [SAM3 MLX](https://huggingface.co/mlx-community/sam3-image) |
 
 ---
 
@@ -299,7 +391,14 @@ This project is licensed under the Apache 2.0 License — see the [LICENSE](LICE
 
 - [Meta AI](https://ai.meta.com/) for the original SAM3 model
 - [MLX Team](https://github.com/ml-explore/mlx) at Apple for the incredible ML framework
+- [Deekshith Dade](https://github.com/Deekshith-Dade) for the original MLX SAM3 implementation
 - The open-source community for continuous inspiration
+
+**Original MLX SAM3 Implementation:**
+
+- Hugging Face: https://huggingface.co/mlx-community/sam3-image
+- GitHub: https://github.com/Deekshith-Dade/mlx_sam3
+- Blog: https://deekshith.me/blog/mlx-sam3
 
 ---
 
@@ -310,4 +409,3 @@ This project is licensed under the Apache 2.0 License — see the [LICENSE](LICE
 [Report Bug](https://github.com/your-username/mlx-sam3/issues) · [Request Feature](https://github.com/your-username/mlx-sam3/issues)
 
 </div>
-
